@@ -13,7 +13,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 import openpyxl
 
 
@@ -316,12 +316,6 @@ def _extract_generic_answer_set(answer_rows: list, ds_config: dict) -> set:
 # 특수 규칙 핸들러
 # ──────────────────────────────────────────────
 
-def _apply_keongang_correction(tuple_set: set, sale_nm: str) -> set:
-    """건강체 보정: MIN_AG=15 → 20."""
-    if '건강체' not in sale_nm:
-        return tuple_set
-    return {(('20' if t[0] == '15' else t[0]),) + t[1:] for t in tuple_set}
-
 
 def _apply_period_strip_fallback(mapped_set: set, answer_set: set) -> set:
     """기간 제거 fallback: 정답이 기간정보 없는 경우 추출 결과에서 기간 제거."""
@@ -468,8 +462,6 @@ def generic_answer_report(
         mapped_vals = mapped_index_4.get(key4) or mapped_index_2.get((dtcd, itcd))
 
         # 특수 규칙 적용
-        if 'keongang_correction' in special_rules and mapped_vals:
-            mapped_vals = _apply_keongang_correction(mapped_vals, sale_nm)
         if 'period_strip_fallback' in special_rules and mapped_vals and answer_vals:
             mapped_vals = _apply_period_strip_fallback(mapped_vals, answer_vals)
 
@@ -802,12 +794,127 @@ def run_comparison(config: DataSetConfig, verbose: bool = False):
 # CLI
 # ──────────────────────────────────────────────
 
+def run_single_comparison(config: DataSetConfig, json_path: Path,
+                          output_path: Optional[Path] = None,
+                          verbose: bool = False):
+    """단일 매핑 JSON 파일에 대한 비교."""
+    # 정답 로드
+    if config.answer_csv and config.answer_csv.exists():
+        answer_data = load_answer_csv(
+            config.answer_csv, config.answer_key_cols, config.answer_value_cols,
+        )
+    else:
+        answer_data = load_answer_excel(
+            config.answer_excel, config.answer_key_cols, config.answer_value_cols,
+        )
+
+    # 단일 파일 로드
+    with json_path.open('r', encoding='utf-8') as f:
+        data = json.load(f)
+    mapped_rows = []
+    if isinstance(data, list):
+        for row in data:
+            if isinstance(row, dict):
+                row['source_file'] = json_path.name
+                mapped_rows.append(row)
+
+    print(f"[{config.name}] Single file: {json_path.name}")
+    print(f"  {len(mapped_rows)} mapped rows, "
+          f"{sum(len(v) for v in answer_data.values())} answer rows")
+
+    # 비교 루프 (run_comparison과 동일)
+    comparison_results = []
+    stats = {'matched': 0, 'unmatched': 0, 'no_answer': 0, 'no_mapping': 0}
+
+    for mapped_row in mapped_rows:
+        dtcd = normalize_code(mapped_row.get('isrn_kind_dtcd', ''))
+        itcd = normalize_code(mapped_row.get('isrn_kind_itcd', ''))
+        sale_nm = normalize_text(str(mapped_row.get('isrn_kind_sale_nm', '')))
+        prod_dtcd = normalize_code(mapped_row.get('prod_dtcd', ''))
+        prod_itcd = normalize_code(mapped_row.get('prod_itcd', ''))
+
+        result_base = {
+            'source_file': mapped_row.get('source_file', ''),
+            'isrn_kind_dtcd': dtcd,
+            'isrn_kind_itcd': itcd,
+            'isrn_kind_sale_nm': sale_nm,
+            'prod_dtcd': prod_dtcd,
+            'prod_itcd': prod_itcd,
+            '상품명': mapped_row.get('상품명', ''),
+        }
+
+        if not (dtcd and itcd and sale_nm):
+            result_base['comparison'] = {
+                'matched': False, 'reason': 'No mapping found (empty codes)',
+            }
+            stats['no_mapping'] += 1
+            comparison_results.append(result_base)
+            continue
+
+        key = tuple(
+            normalize_code(v) if c in ('ISRN_KIND_DTCD', 'ISRN_KIND_ITCD')
+            else normalize_text(str(v))
+            for c, v in zip(config.answer_key_cols, [dtcd, itcd, sale_nm])
+        )
+        answer_rows = answer_data.get(key, [])
+
+        if prod_dtcd and prod_itcd and answer_rows:
+            filtered = [
+                r for r in answer_rows
+                if normalize_code(r.get('PROD_DTCD', '')) == prod_dtcd
+                and normalize_code(r.get('PROD_ITCD', '')) == prod_itcd
+            ]
+            if filtered:
+                answer_rows = filtered
+
+        if not answer_rows:
+            result_base['comparison'] = {
+                'matched': False, 'reason': 'Product not found in answer',
+            }
+            stats['no_answer'] += 1
+            comparison_results.append(result_base)
+            continue
+
+        comparison = config.compare_fn(mapped_row, answer_rows)
+        result_base['comparison'] = comparison
+        if comparison['matched']:
+            stats['matched'] += 1
+        else:
+            stats['unmatched'] += 1
+        comparison_results.append(result_base)
+
+        if verbose and not comparison['matched']:
+            print(f"  Mismatch: {mapped_row.get('상품명', '')}")
+
+    # 출력
+    total = len(comparison_results)
+    if output_path is None:
+        output_path = json_path.with_suffix('.compare.json')
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open('w', encoding='utf-8') as f:
+        json.dump(comparison_results, f, ensure_ascii=False, indent=2)
+
+    print(f"\n  Total: {total}")
+    print(f"  Matched: {stats['matched']}")
+    print(f"  Mismatched: {stats['unmatched']}")
+    print(f"  No answer: {stats['no_answer']}")
+    print(f"  No mapping: {stats['no_mapping']}")
+    if total:
+        rate = stats['matched'] / total * 100
+        print(f"  Match rate: {rate:.1f}%")
+    print(f"  Report: {output_path}")
+
+
 def parse_args():
     configs = _load_dataset_configs()
     parser = argparse.ArgumentParser(description='통합 상품 데이터 비교')
     parser.add_argument('--data-set', required=True,
                         choices=list(configs.keys()),
                         help='비교할 데이터셋')
+    parser.add_argument('--json', type=str, default=None,
+                        help='단일 매핑 JSON 파일 경로')
+    parser.add_argument('--output', type=str, default=None,
+                        help='단일 파일 비교 결과 출력 경로')
     parser.add_argument('--answer-excel', type=Path, default=None,
                         help='정답 Excel 경로 (기본: data-set별 자동)')
     parser.add_argument('--mapped-dir', type=Path, default=None,
@@ -826,6 +933,15 @@ def main():
     # CLI 오버라이드
     if args.answer_excel:
         config.answer_excel = args.answer_excel
+
+    # --- 단일 파일 모드 ---
+    if args.json:
+        json_path = Path(args.json)
+        output_path = Path(args.output) if args.output else None
+        run_single_comparison(config, json_path, output_path, verbose=args.verbose)
+        return
+
+    # --- 디렉토리 모드 ---
     if args.mapped_dir:
         config.mapped_dir = args.mapped_dir
     if args.report_dir:

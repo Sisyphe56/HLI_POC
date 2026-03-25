@@ -311,7 +311,18 @@ python compare_product_data.py --data-set join_age
   - `answer_based_report.json` (CSV row 기준)
 - 비교 기준: `(성별, 최소가입나이, 최대가입나이, INS, PAYM, SPIN)` 튜플 세트 일치
 
+### 단일 파일 비교
+```bash
+python compare_product_data.py --data-set join_age \
+  --json "코드매핑/가입가능나이/가입가능나이_한화생명 바로연금보험 무배당_사업방법서_20260101~.json" \
+  --output /tmp/baro_compare.json
+```
+- 입력: 단일 매핑 JSON + 정답 CSV/Excel (전체)
+- 출력: 비교 결과 JSON (comparison_detailed 형식)
+
 ### 공통 옵션
+- `--json`: 단일 매핑 JSON 파일 경로 (단일 파일 모드)
+- `--output`: 단일 파일 비교 결과 출력 경로
 - `--answer-excel`: 정답 Excel 경로 오버라이드
 - `--mapped-dir`: 매핑 데이터 디렉토리 오버라이드
 - `--report-dir`: 리포트 출력 디렉토리 오버라이드
@@ -377,3 +388,50 @@ done
 - **특수 필터링**: 납입면제형, 간편가입, 일부지급형 레벨 구분
 - **오버매칭 최소화**: 불필요한 추가 토큰이 최소인 후보만 선택
 - **케어백간병플러스보험 예외**: '보장형 계약' 토큰 제거
+
+---
+
+## 8. CSV 변환 (write_product_data.py)
+
+코드매핑 JSON을 정답 CSV와 동일한 칼럼 구조의 CSV로 변환합니다.
+
+### 단일 파일 변환
+```bash
+python write_product_data.py --data-set join_age \
+  --json "코드매핑/가입가능나이/가입가능나이_한화생명 바로연금보험 무배당_사업방법서_20260101~.json" \
+  --output /tmp/baro_join_age.csv
+```
+
+### 기본 출력 경로 (--output 미지정 시)
+```bash
+python write_product_data.py --data-set join_age \
+  --json "코드매핑/가입가능나이/가입가능나이_한화생명 바로연금보험 무배당_사업방법서_20260101~.json"
+# → 결과/가입가능나이/가입가능나이_한화생명 바로연금보험 무배당_사업방법서_20260101~.csv
+```
+
+### 옵션
+- `--data-set`: (필수) 세트 데이터 종류 (payment_cycle, annuity_age, insurance_period, join_age)
+- `--json`: (필수) 코드매핑 JSON 파일 경로
+- `--output`: 출력 CSV 경로 (미지정 시 `결과/{korean_name}/` 하위 자동 생성)
+- `--encoding`: 출력 CSV 인코딩 (기본: euc-kr)
+
+### 칼럼 구조
+`dataset_configs.json`의 `output_csv_columns`에 정의된 칼럼 순서를 따르며, 정답 CSV와 동일한 헤더를 출력합니다. 매핑되지 않는 칼럼은 빈 문자열로 채워집니다.
+
+---
+
+## 9. 데모 웹 서비스 (web/)
+
+FastAPI + SSE 기반의 파이프라인 실행 UI입니다.
+
+### 실행
+```bash
+pip install -r requirements.txt
+python -m web.app
+# → http://localhost:8000
+```
+
+### 구조
+- `web/app.py` — FastAPI 서버, SSE 엔드포인트
+- `web/pipeline.py` — 파이프라인 실행 로직
+- `web/static/` — 프론트엔드 (HTML/CSS/JS)

@@ -19,7 +19,8 @@
       {"json": "납입주기값", "csv": "PAYM_CYCL_VAL", "norm": "text"},
       {"json": "납입주기구분코드", "csv": "PAYM_CYCL_DVSN_CODE", "norm": "text"}
     ],
-    "skip_rule": {"mode": "any_empty", "fields": [0, 1]}
+    "skip_rule": {"mode": "any_empty", "fields": [0, 1]},
+    "output_csv_columns": ["ISRN_KIND_DTCD", "ISRN_KIND_ITCD", "ISRN_KIND_SALE_NM", "PROD_DTCD", "PROD_ITCD", "PROD_SALE_NM", "PAYM_CYCL_VAL", "PAYM_CYCL_DVSN_CODE"]
   },
 
   "annuity_age": {
@@ -45,7 +46,8 @@
       {"json": "성별", "csv": "MINU_GNDR_CODE", "norm": "gender"}
     ],
     "skip_rule": {"mode": "all_default", "fields": [0, 1]},
-    "not_supported_dtcds": ["2242", "2243"]
+    "not_supported_dtcds": ["2242", "2243"],
+    "output_csv_columns": ["ISRN_KIND_DTCD", "ISRN_KIND_ITCD", "ISRN_KIND_SALE_NM", "PROD_DTCD", "PROD_ITCD", "PROD_SALE_NM", "VALD_STAR_DATE", "VALD_END_DATE", "FPIN_STRT_AG_INQY_CODE", "SPIN_STRT_AG_INQY_CODE", "TPIN_STRT_AG_INQY_CODE", "FPIN_STRT_DVSN_CODE", "FPIN_STRT_DVSN_VAL", "SPIN_STRT_DVSN_CODE", "SPIN_STRT_DVSN_VAL", "TPIN_STRT_DVSN_CODE", "TPIN_STRT_DVSN_VAL", "MIN_FPIN", "MAX_FPIN", "FPIN_DVSN_CODE", "MINU_GNDR_CODE", "GURT_NBYR_DVSN_CODE", "MIN_PAYM_TERM", "MAX_PAYM_TERM", "PAYM_TERM_DVSN_CODE", "MINU_MIN_AG", "MINU_MAX_AG", "MIN_MTPM_PREM", "MAX_MTPM_PREM"]
   },
 
   "insurance_period": {
@@ -69,7 +71,8 @@
       {"json": "최소제2보기개시나이", "csv": "MIN_SPIN_STRT_AG", "norm": "age_val"},
       {"json": "최대제2보기개시나이", "csv": "MAX_SPIN_STRT_AG", "norm": "age_val"}
     ],
-    "skip_rule": {"mode": "all_empty", "fields": [0, 1]}
+    "skip_rule": {"mode": "all_empty", "fields": [0, 1]},
+    "output_csv_columns": ["ISRN_KIND_DTCD", "ISRN_KIND_ITCD", "ISRN_KIND_SALE_NM", "PROD_DTCD", "PROD_ITCD", "PROD_SALE_NM", "ISRN_TERM_INQY_CODE", "PAYM_TERM_INQY_CODE", "ISRN_TERM_DVSN_CODE", "ISRN_TERM", "PAYM_TERM_DVSN_CODE", "PAYM_TERM", "MINU_MIN_AG", "MINU_MAX_AG", "MIN_FPIN", "MAX_FPIN", "FPIN_DVSN_CODE", "MINU_GNDR_CODE", "STAR_CTDT", "END_CTDT", "MIN_SPIN_STRT_AG", "MAX_SPIN_STRT_AG", "SPIN_STRT_AG_DVSN_CODE", "AINU_MIN_AG", "AINU_MAX_AG", "MIN_MTPM_PREM", "MAX_MTPM_PREM", "CHLR_ODN1_MIN_AG", "CHLR_ODN1_MAX_AG", "MNTH_PAYM_YN", "AINU_GNDR_CODE", "MIN_PAYM_CYCL_VAL", "MAX_PAYM_CYCL_VAL", "PAYM_CYCL_DVSN_CODE", "CHLR_ODN1_GNDR_CODE", "MIN_POLR_AG", "MAX_POLR_AG", "CRTN_GURT_OTPY_TERM", "CHLR_ODN2_MIN_AG", "CHLR_ODN2_MAX_AG", "MIN_DPND_AG", "MAX_DPND_AG", "PURT_RSTY_YN", "BEFO_CNTC_MIN_ISRN_TERM", "BEFO_CNTC_MAX_ISRN_TERM", "BEFO_CNTC_ISRN_TERM_DVSN_CODE"]
   },
 
   "join_age": {
@@ -104,6 +107,7 @@
       {"json": "제2보기개시나이구분코드", "csv": "SPIN_STRT_AG_DVSN_CODE", "norm": "age_val"}
     ],
     "skip_rule": {"mode": "all_empty", "fields": [0, 1]},
-    "special_rules": ["keongang_correction", "period_strip_fallback"]
+    "special_rules": ["period_strip_fallback"],
+    "output_csv_columns": ["ISRN_KIND_DTCD", "ISRN_KIND_ITCD", "ISRN_KIND_SALE_NM", "PROD_DTCD", "PROD_ITCD", "PROD_SALE_NM", "VALD_STAR_DATE", "VALD_END_DATE", "JOIN_INUR_CODE", "MIN_AG", "MAX_AG", "STAR_CTDT", "END_CTDT", "MIN_ISRN_TERM", "MAX_ISRN_TERM", "ISRN_TERM_DVSN_CODE", "MIN_FPIN", "MAX_FPIN", "FPIN_DVSN_CODE", "MIN_SPIN_STRT_AG", "MAX_SPIN_STRT_AG", "SPIN_STRT_AG_DVSN_CODE", "MIN_PAYM_TERM", "MAX_PAYM_TERM", "PAYM_TERM_DVSN_CODE", "MINU_GNDR_CODE", "AINU_GNDR_CODE", "MIN_PAYM_CYCL_VAL", "MAX_PAYM_CYCL_VAL", "PAYM_CYCL_DVSN_CODE", "CHLR_ODN1_GNDR_CODE", "MINU_MIN_AG", "MINU_MAX_AG", "MIN_MTPM_PREM", "MAX_MTPM_PREM", "MNTH_PAYM_YN", "GURT_TERM", "MIN_DETH_INDX", "MAX_DETH_INDX", "BNDL_CNTC_YN", "MIN_CI_INDX", "MAX_CI_INDX", "RNWL_YN", "MIN_RISK_GRAD_CODE", "MAX_RISK_GRAD_CODE", "CHLR_ODN1_MIN_AG", "CHLR_ODN1_MAX_AG"]
   }
 }
