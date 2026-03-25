@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>사업방법서 데이터 추출 파이프라인</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>사업방법서 데이터 추출 파이프라인 <span class="badge">Demo</span></h1>
+        </header>
+
+        <!-- Upload Section -->
+        <section class="upload-section" id="upload-section">
+            <div class="upload-area" id="upload-area">
+                <input type="file" id="file-input" accept=".pdf" hidden>
+                <div class="upload-content">
+                    <div class="upload-icon">PDF</div>
+                    <p>PDF 파일을 드래그하거나 클릭하여 업로드</p>
+                </div>
+            </div>
+            <div class="file-info" id="file-info" style="display:none">
+                <span class="file-name" id="file-name"></span>
+                <button class="btn btn-sm" id="reset-btn">다시 선택</button>
+            </div>
+        </section>
+
+        <!-- Pipeline Stepper -->
+        <section class="stepper-section" id="stepper-section" style="display:none">
+            <div class="stepper">
+                <div class="step" id="step-1" data-step="1">
+                    <div class="step-indicator">
+                        <div class="step-circle">1</div>
+                        <div class="step-label">상품분류</div>
+                    </div>
+                    <button class="btn btn-run" id="btn-step-1" disabled>실행</button>
+                </div>
+                <div class="step-arrow">&rarr;</div>
+                <div class="step" id="step-2" data-step="2">
+                    <div class="step-indicator">
+                        <div class="step-circle">2</div>
+                        <div class="step-label">세트데이터 추출</div>
+                    </div>
+                    <button class="btn btn-run" id="btn-step-2" disabled>실행</button>
+                </div>
+                <div class="step-arrow">&rarr;</div>
+                <div class="step" id="step-3" data-step="3">
+                    <div class="step-indicator">
+                        <div class="step-circle">3</div>
+                        <div class="step-label">코드매핑</div>
+                    </div>
+                    <button class="btn btn-run" id="btn-step-3" disabled>실행</button>
+                </div>
+                <div class="step-arrow">&rarr;</div>
+                <div class="step" id="step-4" data-step="4">
+                    <div class="step-indicator">
+                        <div class="step-circle">4</div>
+                        <div class="step-label">정답 검증</div>
+                    </div>
+                    <button class="btn btn-run" id="btn-step-4" disabled>실행</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Step 2 Substeps -->
+        <section class="substep-section" id="substep-section" style="display:none">
+            <h3>세트데이터 추출 상세</h3>
+            <div class="substep-grid">
+                <div class="substep" id="sub-payment_cycle">
+                    <span class="substep-icon">&#9675;</span>
+                    <span class="substep-name">납입주기</span>
+                    <span class="substep-status" id="sub-status-payment_cycle">대기</span>
+                </div>
+                <div class="substep" id="sub-annuity_age">
+                    <span class="substep-icon">&#9675;</span>
+                    <span class="substep-name">보기개시나이</span>
+                    <span class="substep-status" id="sub-status-annuity_age">대기</span>
+                </div>
+                <div class="substep" id="sub-insurance_period">
+                    <span class="substep-icon">&#9675;</span>
+                    <span class="substep-name">가입가능보기납기</span>
+                    <span class="substep-status" id="sub-status-insurance_period">대기</span>
+                </div>
+                <div class="substep" id="sub-join_age">
+                    <span class="substep-icon">&#9675;</span>
+                    <span class="substep-name">가입가능나이</span>
+                    <span class="substep-status" id="sub-status-join_age">대기</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Log Section -->
+        <section class="log-section" id="log-section" style="display:none">
+            <h3>실행 로그</h3>
+            <div class="log-area" id="log-area"></div>
+        </section>
+
+        <!-- Results Section -->
+        <section class="results-section" id="results-section" style="display:none">
+            <h3>추출 결과</h3>
+            <div class="tabs" id="result-tabs"></div>
+            <div class="result-content" id="result-content"></div>
+        </section>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

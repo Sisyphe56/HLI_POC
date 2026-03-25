@@ -1,10 +1,13 @@
-*.pdf
-*.json
-*.xlsx
-*.csv
 *.DS_Store
 
-# 설정 파일은 git 추적
-!config/product_overrides.json
-!config/dataset_configs.json
-!config/보종코드_상품코드_매핑.csv
+# 출력 결과물 (JSON) 제외
+상품분류/
+납입주기/
+보기개시나이/
+가입가능보기납기/
+가입가능나이/
+코드매핑/
+정답비교/
+
+# 정답 엑셀 원본 제외
+정답/*.xlsx

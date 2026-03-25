@@ -12,6 +12,14 @@ import pdfplumber
 ROOT = Path(__file__).resolve().parent
 TARGET_DIR = ROOT / '사업방법서' if (ROOT / '사업방법서').exists() else ROOT.parent / '사업방법서'
 OUTPUT_DIR = ROOT / '상품분류'
+OVERRIDES_PATH = ROOT / 'config' / 'product_overrides.json'
+
+
+def _load_overrides() -> dict:
+    if OVERRIDES_PATH.exists():
+        with OVERRIDES_PATH.open('r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
 
 
 def normalize_ws(value: str) -> str:
@@ -124,6 +132,21 @@ def apply_smart_accident_product_overrides(filename: str, objects: List[dict]) -
 
         out.append(new_obj)
     return out
+
+
+def _apply_classification_overrides(filename: str, objects: List[dict]) -> List[dict]:
+    """product_overrides.json의 product_classification 섹션 기반 고정값 override."""
+    overrides = _load_overrides()
+    pc_overrides = overrides.get('product_classification', {})
+    nfc_filename = unicodedata.normalize('NFC', filename)
+    for key, cfg in pc_overrides.items():
+        if key.startswith('_'):
+            continue
+        if key not in nfc_filename:
+            continue
+        if cfg.get('action') == 'fixed':
+            return list(cfg.get('items', []))
+    return objects
 
 
 def _rebuild_product_name(obj: dict) -> str:
@@ -1397,6 +1420,7 @@ def extract_pdf_with_meta(pdf_path: Path) -> Tuple[List[dict], bool]:
             )
         ]
     objects = apply_unmatched_product_overrides(objects, product_names)
+    objects = _apply_classification_overrides(pdf_path.name, objects)
 
     return objects, has_dependent
 
