@@ -386,6 +386,43 @@ if ins_unique <= 1 and paym_unique <= 1:
 
 ---
 
+## Phase 8: 오버라이드 이관 + 단일 파일 파이프라인
+
+### 가입가능나이 오버라이드 이관
+
+`map_product_code.py`의 `_apply_join_age_overrides()` (~190행)에 하드코딩되어 있던 6개 상품별 후처리와 건강체 min_age 보정을 적절한 위치로 이관:
+
+| 상품 | 이관 위치 |
+|------|-----------|
+| 진심가득H (성별제거+dedup+3종보정) | `extract_join_age.py` `_postprocess_jinsim()` |
+| 튼튼이 갱신형 (최광범위 단순화) | `extract_join_age.py` `_postprocess_tuntuni()` |
+| 기업재해보장 (PAYM 범위 병합) | `extract_join_age.py` `_merge_paym_ranges()` |
+| 상생친구, 스마트상해2형, Wealth단체저축 | `product_overrides.json` `join_age` (action: fixed) |
+| 건강체 min_age 20세 | `product_overrides.json` (action: min_age_floor) + `map_product_code.py`에서 적용 |
+
+**진심가득H 2종 max_age 20→30 보정 의도적 제거**: 정답 데이터의 오류로 판단하여 추출값(20) 유지 → 1건 mismatch 허용.
+
+**건강체 교훈**: 처음 `extract_join_age.py`로 이관했으나 "건강체"가 추출 단계 상품명에 없고 CSV `isrn_kind_sale_nm`에만 존재하여 매칭 실패. CSV 매칭 이후인 `map_product_code.py`에서 처리해야 함.
+
+### 단일 파일 모드 완성
+
+| 스크립트 | 추가된 기능 |
+|----------|------------|
+| `map_product_code.py` | `--json` 모드에서 sibling fallback 적용 (`_apply_sibling_fallback_inline`) |
+| `compare_product_data.py` | `--json`, `--output` 인자로 단일 매핑 JSON 비교 |
+| `write_product_data.py` | **신규** — 코드매핑 JSON → 정답 CSV 동일 포맷 변환 |
+
+`dataset_configs.json`에 `output_csv_columns` 추가하여 정답 CSV의 칼럼 구조를 설정으로 관리.
+
+### 정확도 변화
+
+| 데이터셋 | Phase 7 | Phase 8 |
+|----------|---------|---------|
+| 가입가능나이 | 100% | **99.6%** (진심가득H 2종 1건 — 정답 데이터 오류) |
+| 기타 3종 | 100% | **100%** 유지 |
+
+---
+
 ## 커밋 히스토리 요약
 
 ```

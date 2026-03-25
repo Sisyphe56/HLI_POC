@@ -16,7 +16,7 @@
 | 가입가능보기납기 (ISRN_TERM / PAYM_TERM) | `extract_insurance_period.py` | **100%** (261/261) |
 | 납입주기 (PAYM_CYCL) | `extract_payment_cycle.py` | **100%** (250/250) |
 | 보기개시나이 (SPIN_STRT_AG) | `extract_annuity_age.py` | **100%** (120/120) |
-| 가입가능나이 (JOIN_AG) | `extract_join_age.py` | **100%** (261/261) |
+| 가입가능나이 (JOIN_AG) | `extract_join_age.py` | **99.6%** (260/261) |
 
 ---
 
@@ -46,8 +46,14 @@
     ↓
 [4단계] 정답 비교
     compare_product_data.py --data-set [dataset]
-    → 코드매핑 JSON × 정답/*.xlsx 비교
+    → 코드매핑 JSON × 정답/*.csv 비교
     → 출력: 정답비교/[dataset]/answer_based_report.json
+
+    ↓
+[5단계] CSV 변환
+    write_product_data.py --data-set [dataset] --json [매핑JSON]
+    → 코드매핑 JSON → 정답 CSV 동일 포맷 변환
+    → 출력: 결과/[dataset]/*.csv
 ```
 
 ---
@@ -76,6 +82,7 @@ HLI_POC/
 ├── extract_join_age.py                # 가입가능나이 추출
 ├── map_product_code.py                # 코드 매핑 (CSV ↔ 추출 JSON)
 ├── compare_product_data.py            # 정답 비교 리포트 생성 (범용)
+├── write_product_data.py              # 코드매핑 JSON → CSV 변환
 │
 ├── 사업방법서/                        # PDF 입력 (51개)
 ├── 상품분류/                          # 상품분류 추출 결과 JSON
@@ -97,11 +104,22 @@ HLI_POC/
 │   ├── 판매중_보기개시나이_0319.csv
 │   └── 판매중_가입가능나이_0319.csv
 │
-└── 정답비교/                          # 비교 결과 리포트
-    ├── 납입주기/
-    ├── 보기개시나이/
-    ├── 가입가능보기납기/
-    └── 가입가능나이/
+├── 정답비교/                          # 비교 결과 리포트
+│   ├── 납입주기/
+│   ├── 보기개시나이/
+│   ├── 가입가능보기납기/
+│   └── 가입가능나이/
+│
+├── 결과/                              # CSV 변환 결과
+│   ├── 가입가능나이/
+│   ├── 납입주기/
+│   ├── 가입가능보기납기/
+│   └── 보기개시나이/
+│
+└── web/                               # 데모 웹 서비스 (FastAPI + SSE)
+    ├── app.py
+    ├── pipeline.py
+    └── static/
 ```
 
 ---
@@ -141,6 +159,28 @@ python map_product_code.py --data-set payment_cycle
 python compare_product_data.py --data-set payment_cycle
 ```
 
+### 단일 상품 파이프라인
+
+```bash
+PDF="사업방법서/한화생명 바로연금보험 무배당_사업방법서_20260101~.pdf"
+JSON="상품분류/한화생명 바로연금보험 무배당_사업방법서_20260101~.json"
+
+# 1. 상품분류 추출
+python extract_product_classification.py --pdf "$PDF" --output "$JSON"
+
+# 2. 세트데이터 추출
+python extract_join_age.py --pdf "$PDF" --json "$JSON" --output /tmp/ages.json
+
+# 3. 코드 매핑 (sibling fallback 포함)
+python map_product_code.py --data-set join_age --json /tmp/ages.json --output /tmp/mapped.json
+
+# 4. 정답 비교
+python compare_product_data.py --data-set join_age --json /tmp/mapped.json --output /tmp/compare.json
+
+# 5. CSV 변환
+python write_product_data.py --data-set join_age --json /tmp/mapped.json --output /tmp/result.csv
+```
+
 ---
 
 ## 핵심 로직 설명
@@ -177,7 +217,9 @@ python compare_product_data.py --data-set payment_cycle
 
 ## 현재 상태
 
-4종 세트데이터 모두 정답 대비 **100% 정확도** 달성 완료.
+4종 세트데이터 정답 대비 정확도:
+- 가입가능보기납기, 납입주기, 보기개시나이: **100%**
+- 가입가능나이: **99.6%** (260/261) — 진심가득H 2종 1건 mismatch (정답 데이터 오류)
 
 ### 설정 파일 기반 확장
 
