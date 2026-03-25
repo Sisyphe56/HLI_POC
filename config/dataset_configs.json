@@ -1,0 +1,109 @@
+{
+  "_설명": "데이터셋별 비교/매핑 설정. compare_product_data.py와 map_product_code.py에서 로드.",
+
+  "payment_cycle": {
+    "korean_name": "납입주기",
+    "mapped_dir": "코드매핑/납입주기",
+    "answer_excel": "정답/판매중_납입주기정보.xlsx",
+    "answer_csv": "정답/판매중_가입가능납입주기_0319.csv",
+    "report_dir": "정답비교/납입주기",
+    "file_prefix": "납입주기_",
+    "data_field": "납입주기",
+    "output_label": "cycles",
+    "answer_key_cols": ["ISRN_KIND_DTCD", "ISRN_KIND_ITCD", "ISRN_KIND_SALE_NM"],
+    "answer_value_cols": [
+      "PAYM_CYCL_VAL", "PAYM_CYCL_DVSN_CODE",
+      "PROD_DTCD", "PROD_ITCD", "PROD_SALE_NM"
+    ],
+    "tuple_fields": [
+      {"json": "납입주기값", "csv": "PAYM_CYCL_VAL", "norm": "text"},
+      {"json": "납입주기구분코드", "csv": "PAYM_CYCL_DVSN_CODE", "norm": "text"}
+    ],
+    "skip_rule": {"mode": "any_empty", "fields": [0, 1]}
+  },
+
+  "annuity_age": {
+    "korean_name": "보기개시나이",
+    "mapped_dir": "코드매핑/보기개시나이",
+    "answer_excel": "정답/판매중_보기개시나이정보.xlsx",
+    "answer_csv": "정답/판매중_보기개시나이_0319.csv",
+    "report_dir": "정답비교/보기개시나이",
+    "file_prefix": "보기개시나이_",
+    "data_field": "보기개시나이정보",
+    "output_label": "ages",
+    "answer_key_cols": ["ISRN_KIND_DTCD", "ISRN_KIND_ITCD", "ISRN_KIND_SALE_NM"],
+    "answer_value_cols": [
+      "SPIN_STRT_AG_INQY_CODE", "SPIN_STRT_DVSN_CODE", "SPIN_STRT_DVSN_VAL",
+      "TPIN_STRT_AG_INQY_CODE", "TPIN_STRT_DVSN_CODE", "TPIN_STRT_DVSN_VAL",
+      "FPIN_STRT_AG_INQY_CODE", "FPIN_STRT_DVSN_CODE", "FPIN_STRT_DVSN_VAL",
+      "MINU_GNDR_CODE",
+      "PROD_DTCD", "PROD_ITCD", "PROD_SALE_NM"
+    ],
+    "tuple_fields": [
+      {"json": "제2보기개시나이", "csv": "SPIN_STRT_AG_INQY_CODE", "norm": "age_code", "default": "0"},
+      {"json": "제3보기개시나이", "csv": "TPIN_STRT_AG_INQY_CODE", "norm": "age_code", "default": "0"},
+      {"json": "성별", "csv": "MINU_GNDR_CODE", "norm": "gender"}
+    ],
+    "skip_rule": {"mode": "all_default", "fields": [0, 1]},
+    "not_supported_dtcds": ["2242", "2243"]
+  },
+
+  "insurance_period": {
+    "korean_name": "가입가능보기납기",
+    "mapped_dir": "코드매핑/가입가능보기납기",
+    "answer_excel": "정답/판매중_보기납기정보.xlsx",
+    "answer_csv": "정답/판매중_가입가능보기납기_0319.csv",
+    "report_dir": "정답비교/가입가능보기납기",
+    "file_prefix": "가입가능보기납기_",
+    "data_field": "가입가능보기납기",
+    "output_label": "periods",
+    "answer_key_cols": ["ISRN_KIND_DTCD", "ISRN_KIND_ITCD", "ISRN_KIND_SALE_NM"],
+    "answer_value_cols": [
+      "ISRN_TERM_INQY_CODE", "PAYM_TERM_INQY_CODE",
+      "MIN_SPIN_STRT_AG", "MAX_SPIN_STRT_AG", "SPIN_STRT_AG_DVSN_CODE",
+      "PROD_DTCD", "PROD_ITCD", "PROD_SALE_NM"
+    ],
+    "tuple_fields": [
+      {"json": "보험기간", "csv": "ISRN_TERM_INQY_CODE", "norm": "text", "default": "0"},
+      {"json": "납입기간", "csv": "PAYM_TERM_INQY_CODE", "norm": "text", "default": "0"},
+      {"json": "최소제2보기개시나이", "csv": "MIN_SPIN_STRT_AG", "norm": "age_val"},
+      {"json": "최대제2보기개시나이", "csv": "MAX_SPIN_STRT_AG", "norm": "age_val"}
+    ],
+    "skip_rule": {"mode": "all_empty", "fields": [0, 1]}
+  },
+
+  "join_age": {
+    "korean_name": "가입가능나이",
+    "mapped_dir": "코드매핑/가입가능나이",
+    "answer_excel": "정답/판매중_가입나이정보.xlsx",
+    "answer_csv": "정답/판매중_가입가능나이_0319.csv",
+    "report_dir": "정답비교/가입가능나이",
+    "file_prefix": "가입가능나이_",
+    "data_field": "가입가능나이",
+    "output_label": "ages",
+    "answer_key_cols": ["ISRN_KIND_DTCD", "ISRN_KIND_ITCD", "ISRN_KIND_SALE_NM"],
+    "answer_value_cols": [
+      "MIN_AG", "MAX_AG", "MINU_GNDR_CODE",
+      "MIN_ISRN_TERM", "MAX_ISRN_TERM", "ISRN_TERM_DVSN_CODE",
+      "MIN_PAYM_TERM", "MAX_PAYM_TERM", "PAYM_TERM_DVSN_CODE",
+      "MIN_SPIN_STRT_AG", "MAX_SPIN_STRT_AG", "SPIN_STRT_AG_DVSN_CODE",
+      "PROD_DTCD", "PROD_ITCD", "PROD_SALE_NM"
+    ],
+    "tuple_fields": [
+      {"json": "최소가입나이", "csv": "MIN_AG", "norm": "age_val"},
+      {"json": "최대가입나이", "csv": "MAX_AG", "norm": "age_val"},
+      {"json": "성별", "csv": "MINU_GNDR_CODE", "norm": "gender_code"},
+      {"json": "최소보험기간", "csv": "MIN_ISRN_TERM", "norm": "age_val"},
+      {"json": "최대보험기간", "csv": "MAX_ISRN_TERM", "norm": "age_val"},
+      {"json": "보험기간구분코드", "csv": "ISRN_TERM_DVSN_CODE", "norm": "age_val"},
+      {"json": "최소납입기간", "csv": "MIN_PAYM_TERM", "norm": "age_val"},
+      {"json": "최대납입기간", "csv": "MAX_PAYM_TERM", "norm": "age_val"},
+      {"json": "납입기간구분코드", "csv": "PAYM_TERM_DVSN_CODE", "norm": "age_val"},
+      {"json": "최소제2보기개시나이", "csv": "MIN_SPIN_STRT_AG", "norm": "age_val"},
+      {"json": "최대제2보기개시나이", "csv": "MAX_SPIN_STRT_AG", "norm": "age_val"},
+      {"json": "제2보기개시나이구분코드", "csv": "SPIN_STRT_AG_DVSN_CODE", "norm": "age_val"}
+    ],
+    "skip_rule": {"mode": "all_empty", "fields": [0, 1]},
+    "special_rules": ["keongang_correction", "period_strip_fallback"]
+  }
+}

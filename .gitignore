@@ -1,0 +1,10 @@
+*.pdf
+*.json
+*.xlsx
+*.csv
+*.DS_Store
+
+# 설정 파일은 git 추적
+!config/product_overrides.json
+!config/dataset_configs.json
+!config/보종코드_상품코드_매핑.csv
