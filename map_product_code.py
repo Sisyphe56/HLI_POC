@@ -572,6 +572,105 @@ def generate_csv_based_report(
 # 같은 추출 데이터에 매핑
 # ---------------------------------------------------------------------------
 
+def _find_sibling_targets(
+    mapping_rows: List[Dict],
+    matched_csv_ids: Set[str],
+) -> List[Dict]:
+    """매칭된 sibling이 있는 unmatched CSV rows를 찾는다."""
+    dtcd_itcd_index: Dict[Tuple[str, str], List[int]] = defaultdict(list)
+    for i, row in enumerate(mapping_rows):
+        key = (row['isrn_kind_dtcd'], row['isrn_kind_itcd'])
+        dtcd_itcd_index[key].append(i)
+
+    targets: List[Dict] = []
+    for i, row in enumerate(mapping_rows):
+        if row['csv_row_id'] in matched_csv_ids:
+            continue
+        key = (row['isrn_kind_dtcd'], row['isrn_kind_itcd'])
+        has_matched = any(
+            mapping_rows[j]['csv_row_id'] in matched_csv_ids
+            for j in dtcd_itcd_index[key]
+        )
+        if has_matched:
+            targets.append(row)
+    return targets
+
+
+def _build_sibling_row(
+    target_row: Dict,
+    template_candidates: List[dict],
+) -> dict:
+    """target CSV row + 최적 템플릿으로 sibling fallback row 생성."""
+    target_tokens = set(split_match_tokens(target_row.get('prod_sale_nm', '')))
+    best_template = template_candidates[0]
+    best_score = -1
+    for cand in template_candidates:
+        cand_name = cand.get('상품명', '') or cand.get('상품명칭', '')
+        cand_tokens = set(split_match_tokens(cand_name))
+        if not target_tokens or not cand_tokens:
+            continue
+        overlap = len(target_tokens & cand_tokens)
+        extra = len(cand_tokens - target_tokens)
+        score = overlap * 10 - extra
+        if score > best_score:
+            best_score = score
+            best_template = cand
+
+    new_row = {
+        'isrn_kind_dtcd': target_row['isrn_kind_dtcd'],
+        'isrn_kind_itcd': target_row['isrn_kind_itcd'],
+        'isrn_kind_sale_nm': target_row['isrn_kind_sale_nm'],
+        'prod_dtcd': target_row['prod_dtcd'],
+        'prod_itcd': target_row['prod_itcd'],
+        'prod_sale_nm': target_row['prod_sale_nm'],
+    }
+    for k in ('상품명칭', '상품명'):
+        if k in best_template:
+            new_row[k] = best_template[k]
+    for k in sorted(best_template.keys()):
+        if k.startswith('세부종목'):
+            new_row[k] = best_template[k]
+    _data_fields = [c.data_field_name for c in DATASET_CONFIGS.values() if c.data_field_name]
+    for k in _data_fields:
+        if k in best_template:
+            new_row[k] = best_template[k]
+    return new_row
+
+
+def _apply_sibling_fallback_inline(
+    mapped_rows: List[dict],
+    matched_ids: Set[str],
+    mapping_rows: List[Dict],
+) -> int:
+    """단일 파일 모드용 인메모리 sibling fallback. mapped_rows에 직접 append.
+
+    Returns: 추가된 row 수.
+    """
+    targets = _find_sibling_targets(mapping_rows, matched_ids)
+    if not targets:
+        return 0
+
+    # 인메모리 템플릿 인덱스
+    dtcd_itcd_output: Dict[Tuple[str, str], List[dict]] = defaultdict(list)
+    for row in mapped_rows:
+        key = (row.get('isrn_kind_dtcd', ''), row.get('isrn_kind_itcd', ''))
+        if key[0]:
+            dtcd_itcd_output[key].append(row)
+
+    added = 0
+    for target_row in targets:
+        key = (target_row['isrn_kind_dtcd'], target_row['isrn_kind_itcd'])
+        candidates = dtcd_itcd_output.get(key, [])
+        if not candidates:
+            continue
+        mapped_rows.append(_build_sibling_row(target_row, candidates))
+        added += 1
+
+    if added:
+        print(f'Sibling fallback: {added} CSV rows added')
+    return added
+
+
 def apply_sibling_fallback(
     mapping_rows: List[Dict],
     all_matched_csv_ids: Set[str],
@@ -582,35 +681,15 @@ def apply_sibling_fallback(
 
     Returns: sibling fallback으로 추가 매칭된 csv_row_id 집합.
     """
-    # (dtcd, itcd) -> [row indices]
-    dtcd_itcd_index: Dict[Tuple[str, str], List[int]] = defaultdict(list)
-    for i, row in enumerate(mapping_rows):
-        key = (row['isrn_kind_dtcd'], row['isrn_kind_itcd'])
-        dtcd_itcd_index[key].append(i)
-
-    # Identify unmatched rows that have matched siblings
-    sibling_targets: List[Dict] = []  # unmatched CSV rows to be added
-    for i, row in enumerate(mapping_rows):
-        if row['csv_row_id'] in all_matched_csv_ids:
-            continue
-        key = (row['isrn_kind_dtcd'], row['isrn_kind_itcd'])
-        matched_siblings = [
-            mapping_rows[j] for j in dtcd_itcd_index[key]
-            if mapping_rows[j]['csv_row_id'] in all_matched_csv_ids
-        ]
-        if matched_siblings:
-            sibling_targets.append(row)
-
-    if not sibling_targets:
+    targets = _find_sibling_targets(mapping_rows, all_matched_csv_ids)
+    if not targets:
         return set()
 
     # Read existing output files and find rows matching sibling's (dtcd, itcd)
-    # to copy the extracted data (상품명칭, 세부종목, 상품명 etc.)
     output_files = sorted(output_dir.glob(f'{config.output_prefix}*.json'))
 
-    # Build index: (dtcd, itcd) -> output rows from existing files
     dtcd_itcd_output: Dict[Tuple[str, str], List[dict]] = defaultdict(list)
-    output_file_map: Dict[Tuple[str, str], Path] = {}  # which file to append to
+    output_file_map: Dict[Tuple[str, str], Path] = {}
     for fpath in output_files:
         rows = load_json(fpath)
         for row in rows:
@@ -620,60 +699,20 @@ def apply_sibling_fallback(
                 if key not in output_file_map:
                     output_file_map[key] = fpath
 
-    # Create new output rows for sibling targets
     added_ids: Set[str] = set()
     file_appends: Dict[Path, List[dict]] = defaultdict(list)
 
-    for target_row in sibling_targets:
+    for target_row in targets:
         key = (target_row['isrn_kind_dtcd'], target_row['isrn_kind_itcd'])
-        existing = dtcd_itcd_output.get(key, [])
-        if not existing:
+        candidates = dtcd_itcd_output.get(key, [])
+        if not candidates:
             continue
-
-        # Find best-matching template by comparing target's prod_sale_nm
-        # with each existing output row's 상품명 (token overlap score)
-        target_tokens = set(split_match_tokens(target_row.get('prod_sale_nm', '')))
-        best_template = existing[0]
-        best_score = -1
-        for cand in existing:
-            cand_name = cand.get('상품명', '') or cand.get('상품명칭', '')
-            cand_tokens = set(split_match_tokens(cand_name))
-            if not target_tokens or not cand_tokens:
-                continue
-            overlap = len(target_tokens & cand_tokens)
-            extra = len(cand_tokens - target_tokens)
-            score = overlap * 10 - extra
-            if score > best_score:
-                best_score = score
-                best_template = cand
-        template = best_template
-        new_row = {}
-        # Copy CSV code fields from the sibling target
-        new_row['isrn_kind_dtcd'] = target_row['isrn_kind_dtcd']
-        new_row['isrn_kind_itcd'] = target_row['isrn_kind_itcd']
-        new_row['isrn_kind_sale_nm'] = target_row['isrn_kind_sale_nm']
-        new_row['prod_dtcd'] = target_row['prod_dtcd']
-        new_row['prod_itcd'] = target_row['prod_itcd']
-        new_row['prod_sale_nm'] = target_row['prod_sale_nm']
-        # Copy extracted data fields from the template
-        for k in ('상품명칭', '상품명'):
-            if k in template:
-                new_row[k] = template[k]
-        for k in sorted(template.keys()):
-            if k.startswith('세부종목'):
-                new_row[k] = template[k]
-        # Copy data-set specific fields (동적으로 config에서 로드)
-        _data_fields = [c.data_field_name for c in DATASET_CONFIGS.values() if c.data_field_name]
-        for k in _data_fields:
-            if k in template:
-                new_row[k] = template[k]
-
+        new_row = _build_sibling_row(target_row, candidates)
         fpath = output_file_map.get(key)
         if fpath:
             file_appends[fpath].append(new_row)
         added_ids.add(target_row['csv_row_id'])
 
-    # Append to output files
     for fpath, new_rows in file_appends.items():
         existing = load_json(fpath)
         existing.extend(new_rows)
@@ -723,12 +762,16 @@ def main():
             Path(args.output) if args.output
             else output_dir / f'{config.output_prefix}{json_path.name}'
         )
-        mapped_rows, stats, _ = process_file(json_path, mapping_rows, config)
+        mapped_rows, stats, matched_ids = process_file(json_path, mapping_rows, config)
+        sibling_count = _apply_sibling_fallback_inline(
+            mapped_rows, matched_ids, mapping_rows,
+        )
         write_json(output_path, mapped_rows)
 
         print(f'{json_path.name} -> {output_path.name}')
-        print(f'  Total: {stats["total"]}')
+        print(f'  Total: {stats["total"] + sibling_count}')
         print(f'  Matched: {stats["matched"]}')
+        print(f'  Sibling fallback: {sibling_count}')
         print(f'  Unmatched: {stats["unmatched"]}')
         print(f'  Ambiguous: {stats["ambiguous"]}')
         return
