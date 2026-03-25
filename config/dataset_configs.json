@@ -104,6 +104,6 @@
       {"json": "제2보기개시나이구분코드", "csv": "SPIN_STRT_AG_DVSN_CODE", "norm": "age_val"}
     ],
     "skip_rule": {"mode": "all_empty", "fields": [0, 1]},
-    "special_rules": ["keongang_correction", "period_strip_fallback"]
+    "special_rules": ["period_strip_fallback"]
   }
 }

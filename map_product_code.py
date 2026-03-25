@@ -377,197 +377,31 @@ def _collapse_gender(ages: List[dict]) -> List[dict]:
     return result
 
 
-def _merge_paym_ranges(ages: List[dict]) -> List[dict]:
-    """동일 (min_ag, max_ag, gender, INS, SPIN) 그룹에서 PAYM을 min/max 범위로 병합."""
-    from collections import defaultdict
-
-    def _group_key(a: dict) -> tuple:
-        return (
-            a.get('최소가입나이', ''), a.get('최대가입나이', ''), a.get('성별', ''),
-            a.get('최소보험기간', ''), a.get('최대보험기간', ''), a.get('보험기간구분코드', ''),
-            a.get('최소제2보기개시나이', ''), a.get('최대제2보기개시나이', ''), a.get('제2보기개시나이구분코드', ''),
-        )
-
-    groups: Dict[tuple, List[dict]] = defaultdict(list)
-    for a in ages:
-        groups[_group_key(a)].append(a)
-
-    result: List[dict] = []
-    for key, group in groups.items():
-        if len(group) == 1:
-            result.append(group[0])
+def _apply_min_age_floor(ages: List[dict], sale_nm: str) -> List[dict]:
+    """product_overrides.json의 min_age_floor 규칙 적용 (CSV sale_nm 기준 매칭)."""
+    overrides_path = PROJECT_ROOT / 'config' / 'product_overrides.json'
+    if not overrides_path.exists():
+        return ages
+    with overrides_path.open('r', encoding='utf-8') as f:
+        ja_overrides = json.load(f).get('join_age', {})
+    nfc_nm = unicodedata.normalize('NFC', sale_nm)
+    for ov_key, ov_cfg in ja_overrides.items():
+        if ov_key.startswith('_') or not isinstance(ov_cfg, dict):
             continue
-        # PAYM code가 모두 같은 경우만 병합
-        paym_codes = {a.get('납입기간구분코드', '') for a in group}
-        if len(paym_codes) != 1 or '' in paym_codes:
-            result.extend(group)
+        if ov_cfg.get('action') != 'min_age_floor':
             continue
-        paym_code = paym_codes.pop()
-        try:
-            paym_vals = [int(a.get('최소납입기간', '0')) for a in group]
-            merged = dict(group[0])
-            merged['최소납입기간'] = str(min(paym_vals))
-            merged['최대납입기간'] = str(max(paym_vals))
-            result.append(merged)
-        except (ValueError, TypeError):
-            result.extend(group)
-
-    return result
-
-
-def _apply_join_age_overrides(ages: List[dict], sale_nm: str) -> List[dict]:
-    """제품별 가입가능나이 후처리 override."""
-
-    # 진심가득H: 성별 제거 + 동일 (INS, PAYM) 그룹에서 max max_age 유지 + 종별 보정
-    if '진심가득' in sale_nm:
-        # 1) 성별 제거 + 중복 제거
-        seen: set = set()
-        deduped: List[dict] = []
-        for a in ages:
-            rec = dict(a)
-            rec['성별'] = ''
-            sig = tuple(rec.get(k, '') for k in (
-                '최소가입나이', '최대가입나이', '성별',
-                '최소보험기간', '최대보험기간', '보험기간구분코드',
-                '최소납입기간', '최대납입기간', '납입기간구분코드',
-                '최소제2보기개시나이', '최대제2보기개시나이', '제2보기개시나이구분코드',
-            ))
-            if sig not in seen:
-                seen.add(sig)
-                deduped.append(rec)
-        # 2) 동일 (INS, PAYM code) 그룹에서 max max_age만 유지
-        from collections import defaultdict
-        groups: Dict[tuple, List[dict]] = defaultdict(list)
-        for rec in deduped:
-            key = (
-                rec.get('최소보험기간', ''), rec.get('보험기간구분코드', ''),
-                rec.get('최소납입기간', ''), rec.get('납입기간구분코드', ''),
-            )
-            groups[key].append(rec)
-        result: List[dict] = []
-        for key, group in groups.items():
-            if len(group) == 1:
-                result.append(group[0])
-            else:
-                # max max_age 유지, min min_age 유지
-                best = max(group, key=lambda r: int(r.get('최대가입나이', '0')))
-                min_age = min(int(r.get('최소가입나이', '0')) for r in group)
-                best = dict(best)
-                best['최소가입나이'] = str(min_age)
-                result.append(best)
-        # 2종 보정: INS=100세만기 30세납(PAYM=30/X) max_age를 30으로 (태아 특례)
-        if '2종' in sale_nm:
-            for rec in result:
-                if (rec.get('납입기간구분코드', '') == 'X' and
-                        rec.get('최소납입기간', '') == '30' and
-                        rec.get('최대가입나이', '') == '20' and
-                        rec.get('최소보험기간', '') == '100'):
-                    rec['최대가입나이'] = '30'
-        # 3종 보정: 누락된 PAYM=5,7 추가 (max_age=35)
-        if '3종' in sale_nm:
-            existing_payms = {(r.get('최소보험기간', ''), r.get('최소납입기간', ''), r.get('납입기간구분코드', '')) for r in result}
-            for ins in ['90', '100']:
-                for paym in ['5', '7']:
-                    if (ins, paym, 'N') not in existing_payms:
-                        result.append({
-                            '성별': '', '최소가입나이': '0', '최대가입나이': '35',
-                            '최소보험기간': ins, '최대보험기간': ins, '보험기간구분코드': 'X',
-                            '최소납입기간': paym, '최대납입기간': paym, '납입기간구분코드': 'N',
-                            '최소제2보기개시나이': '', '최대제2보기개시나이': '', '제2보기개시나이구분코드': '',
-                        })
+        keywords = ov_key.split('+')
+        if not all(kw in nfc_nm for kw in keywords):
+            continue
+        floor = int(ov_cfg.get('min_age', '0'))
+        result = [dict(a) for a in ages]
+        for a in result:
+            try:
+                if int(a.get('최소가입나이', '0')) < floor:
+                    a['최소가입나이'] = str(floor)
+            except (ValueError, TypeError):
+                pass
         return result
-
-    # 상생친구: 단순형 (0, 30, no details)
-    if '상생친구' in sale_nm:
-        empty = {
-            '성별': '', '최소가입나이': '0', '최대가입나이': '30',
-            '최소납입기간': '', '최대납입기간': '', '납입기간구분코드': '',
-            '최소제2보기개시나이': '', '최대제2보기개시나이': '', '제2보기개시나이구분코드': '',
-            '최소보험기간': '', '최대보험기간': '', '보험기간구분코드': '',
-        }
-        return [empty]
-
-    # 튼튼이 갱신형: 단순형 — INS/PAYM가 있는 레코드에서 최광범위 나이 사용
-    if '튼튼이' in sale_nm and '갱신' in sale_nm:
-        # INS 또는 PAYM가 있는 레코드 중 max_age가 가장 큰 것 선택
-        best = None
-        for a in ages:
-            has_detail = a.get('최소보험기간', '') or a.get('최소납입기간', '')
-            if has_detail:
-                try:
-                    max_a = int(a.get('최대가입나이', '0'))
-                    if best is None or max_a > int(best.get('최대가입나이', '0')):
-                        best = a
-                except (ValueError, TypeError):
-                    pass
-        if best:
-            empty = {
-                '성별': '', '최소가입나이': best.get('최소가입나이', '0'),
-                '최대가입나이': best.get('최대가입나이', '0'),
-                '최소납입기간': '', '최대납입기간': '', '납입기간구분코드': '',
-                '최소제2보기개시나이': '', '최대제2보기개시나이': '', '제2보기개시나이구분코드': '',
-                '최소보험기간': '', '최대보험기간': '', '보험기간구분코드': '',
-            }
-            return [empty]
-
-    # H기업재해보장: 동일 그룹 PAYM 범위 병합
-    if '기업재해보장' in sale_nm:
-        return _merge_paym_ranges(ages)
-
-    # 스마트H/V상해 2형(보장강화형): 페이지 분할로 불완전한 테이블 보정
-    # 2형은 모든 (gender, paym)에서 max_age=80
-    if ('스마트' in sale_nm and '상해' in sale_nm and '2형' in sale_nm
-            and '보장강화' in sale_nm):
-        payms_all = ['5', '7', '10', '15', '20']
-        genders = ['1', '2']
-        result = []
-        # 기존 데이터에서 min_age, INS 추출
-        ins_val = ''
-        ins_dvsn = ''
-        min_ag = '15'
-        for a in ages:
-            if a.get('최소보험기간', ''):
-                ins_val = a['최소보험기간']
-                ins_dvsn = a.get('보험기간구분코드', '')
-                min_ag = a.get('최소가입나이', '15')
-                break
-        for g in genders:
-            for p in payms_all:
-                result.append({
-                    '성별': g, '최소가입나이': min_ag, '최대가입나이': '80',
-                    '최소납입기간': p, '최대납입기간': p, '납입기간구분코드': 'N',
-                    '최소제2보기개시나이': '', '최대제2보기개시나이': '', '제2보기개시나이구분코드': '',
-                    '최소보험기간': ins_val, '최대보험기간': ins_val, '보험기간구분코드': ins_dvsn,
-                })
-        return result
-
-    # Wealth단체저축보험: PDF 테이블 구조가 특수 — 정확한 데이터 직접 생성
-    if 'Wealth' in sale_nm and '단체저축' in sale_nm:
-        _r = lambda min_a, max_a, ins, ins_c, paym_min, paym_max, paym_c: {
-            '성별': '', '최소가입나이': str(min_a), '최대가입나이': str(max_a),
-            '최소보험기간': str(ins), '최대보험기간': str(ins), '보험기간구분코드': ins_c,
-            '최소납입기간': str(paym_min), '최대납입기간': str(paym_max), '납입기간구분코드': paym_c,
-            '최소제2보기개시나이': '', '최대제2보기개시나이': '', '제2보기개시나이구분코드': '',
-        }
-        return [
-            _r(15, 75, 3, 'N', 3, 3, 'N'),    # 3년만기 전기납
-            _r(15, 75, 5, 'N', 5, 5, 'N'),    # 5년만기 전기납
-            _r(15, 68, 10, 'N', 5, 10, 'N'),  # 10년만기 5~10년납
-            _r(15, 60, 20, 'N', 5, 20, 'N'),  # 20년만기 5~20년납
-            _r(15, 53, 60, 'X', 5, 5, 'N'),   # 60세만기 5년납
-            _r(15, 52, 60, 'X', 7, 7, 'N'),   # 60세만기 7년납
-            _r(15, 49, 60, 'X', 10, 10, 'N'), # 60세만기 10년납
-            _r(15, 44, 60, 'X', 15, 15, 'N'), # 60세만기 15년납
-            _r(15, 39, 60, 'X', 20, 20, 'N'), # 60세만기 20년납
-            _r(15, 53, 60, 'X', 60, 60, 'X'), # 60세만기 전기납
-            _r(15, 68, 80, 'X', 5, 5, 'N'),   # 80세만기 5년납
-            _r(15, 68, 80, 'X', 7, 7, 'N'),   # 80세만기 7년납
-            _r(15, 68, 80, 'X', 10, 10, 'N'), # 80세만기 10년납
-            _r(15, 64, 80, 'X', 15, 15, 'N'), # 80세만기 15년납
-            _r(15, 54, 80, 'X', 20, 20, 'N'), # 80세만기 20년납
-            _r(15, 68, 80, 'X', 80, 80, 'X'), # 80세만기 전기납
-        ]
-
     return ages
 
 
@@ -575,18 +409,8 @@ def build_join_age_row(record: dict, csv_match: Optional[Dict]) -> dict:
     row = _base_output_row(record, csv_match)
     if '가입가능나이' in record:
         ages = record['가입가능나이']
-        # 건강체 상품은 최소가입나이 20세 제한
         sale_nm = (csv_match or {}).get('isrn_kind_sale_nm', '')
-        if '건강체' in sale_nm:
-            ages = [dict(a) for a in ages]
-            for a in ages:
-                try:
-                    if int(a.get('최소가입나이', '0')) < 20:
-                        a['최소가입나이'] = '20'
-                except (ValueError, TypeError):
-                    pass
-        # 제품별 후처리 override
-        ages = _apply_join_age_overrides(ages, sale_nm)
+        ages = _apply_min_age_floor(ages, sale_nm)
         row['가입가능나이'] = ages
     return row
 

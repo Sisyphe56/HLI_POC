@@ -316,12 +316,6 @@ def _extract_generic_answer_set(answer_rows: list, ds_config: dict) -> set:
 # 특수 규칙 핸들러
 # ──────────────────────────────────────────────
 
-def _apply_keongang_correction(tuple_set: set, sale_nm: str) -> set:
-    """건강체 보정: MIN_AG=15 → 20."""
-    if '건강체' not in sale_nm:
-        return tuple_set
-    return {(('20' if t[0] == '15' else t[0]),) + t[1:] for t in tuple_set}
-
 
 def _apply_period_strip_fallback(mapped_set: set, answer_set: set) -> set:
     """기간 제거 fallback: 정답이 기간정보 없는 경우 추출 결과에서 기간 제거."""
@@ -468,8 +462,6 @@ def generic_answer_report(
         mapped_vals = mapped_index_4.get(key4) or mapped_index_2.get((dtcd, itcd))
 
         # 특수 규칙 적용
-        if 'keongang_correction' in special_rules and mapped_vals:
-            mapped_vals = _apply_keongang_correction(mapped_vals, sale_nm)
         if 'period_strip_fallback' in special_rules and mapped_vals and answer_vals:
             mapped_vals = _apply_period_strip_fallback(mapped_vals, answer_vals)
 

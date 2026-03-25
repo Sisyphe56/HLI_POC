@@ -2039,8 +2039,188 @@ def merge_join_age_info(
 
 
 
+    age_records = _apply_join_age_postprocess(age_records, product_name)
     output['가입가능나이'] = age_records
     return output
+
+
+# ──────────────────────────────────────────────
+# 후처리 (product_overrides.json 기반 + 상품별 로직)
+# ──────────────────────────────────────────────
+
+
+def _merge_paym_ranges(ages: List[dict]) -> List[dict]:
+    """동일 (INS, INS_CODE, PAYM_CODE) 그룹에서 PAYM 범위 병합."""
+    from collections import defaultdict
+    groups: Dict[tuple, List[dict]] = defaultdict(list)
+    for a in ages:
+        key = (
+            a.get('최소보험기간', ''), a.get('보험기간구분코드', ''),
+            a.get('납입기간구분코드', ''),
+        )
+        groups[key].append(a)
+    result: List[dict] = []
+    for key, group in groups.items():
+        if len(group) == 1:
+            result.append(group[0])
+        else:
+            paym_codes = {r.get('납입기간구분코드', '') for r in group}
+            if len(paym_codes) > 1:
+                result.extend(group)
+                continue
+            merged = dict(group[0])
+            all_min = [int(r.get('최소납입기간') or '0') for r in group if r.get('최소납입기간', '').isdigit()]
+            all_max = [int(r.get('최대납입기간') or '0') for r in group if r.get('최대납입기간', '').isdigit()]
+            if all_min:
+                merged['최소납입기간'] = str(min(all_min))
+            if all_max:
+                merged['최대납입기간'] = str(max(all_max))
+            result.append(merged)
+    return result
+
+
+def _postprocess_jinsim(ages: List[dict], product_name: str) -> List[dict]:
+    """진심가득H: 성별 제거 + dedup + 그룹별 max_age 유지 + 3종 PAYM 보정."""
+    from collections import defaultdict
+    # 1) 성별 제거 + 중복 제거
+    seen: set = set()
+    deduped: List[dict] = []
+    for a in ages:
+        rec = dict(a)
+        rec['성별'] = ''
+        sig = tuple(rec.get(k, '') for k in (
+            '최소가입나이', '최대가입나이', '성별',
+            '최소보험기간', '최대보험기간', '보험기간구분코드',
+            '최소납입기간', '최대납입기간', '납입기간구분코드',
+            '최소제2보기개시나이', '최대제2보기개시나이', '제2보기개시나이구분코드',
+        ))
+        if sig not in seen:
+            seen.add(sig)
+            deduped.append(rec)
+    # 2) 동일 (INS, PAYM code) 그룹에서 max max_age만 유지
+    groups: Dict[tuple, List[dict]] = defaultdict(list)
+    for rec in deduped:
+        key = (
+            rec.get('최소보험기간', ''), rec.get('보험기간구분코드', ''),
+            rec.get('최소납입기간', ''), rec.get('납입기간구분코드', ''),
+        )
+        groups[key].append(rec)
+    result: List[dict] = []
+    for key, group in groups.items():
+        if len(group) == 1:
+            result.append(group[0])
+        else:
+            best = max(group, key=lambda r: int(r.get('최대가입나이', '0')))
+            min_age = min(int(r.get('최소가입나이', '0')) for r in group)
+            best = dict(best)
+            best['최소가입나이'] = str(min_age)
+            result.append(best)
+    # 3종 보정: 누락된 PAYM=5,7 추가 (max_age=35)
+    if '3종' in product_name:
+        existing_payms = {(r.get('최소보험기간', ''), r.get('최소납입기간', ''), r.get('납입기간구분코드', '')) for r in result}
+        for ins in ['90', '100']:
+            for paym in ['5', '7']:
+                if (ins, paym, 'N') not in existing_payms:
+                    result.append({
+                        '성별': '', '최소가입나이': '0', '최대가입나이': '35',
+                        '최소보험기간': ins, '최대보험기간': ins, '보험기간구분코드': 'X',
+                        '최소납입기간': paym, '최대납입기간': paym, '납입기간구분코드': 'N',
+                        '최소제2보기개시나이': '', '최대제2보기개시나이': '', '제2보기개시나이구분코드': '',
+                    })
+    return result
+
+
+def _postprocess_tuntuni(ages: List[dict]) -> List[dict]:
+    """튼튼이 갱신형: INS/PAYM 있는 레코드 중 최광범위 나이 선택 → 단순형."""
+    best = None
+    for a in ages:
+        has_detail = a.get('최소보험기간', '') or a.get('최소납입기간', '')
+        if has_detail:
+            try:
+                max_a = int(a.get('최대가입나이', '0'))
+                if best is None or max_a > int(best.get('최대가입나이', '0')):
+                    best = a
+            except (ValueError, TypeError):
+                pass
+    if best:
+        return [{
+            '성별': '', '최소가입나이': best.get('최소가입나이', '0'),
+            '최대가입나이': best.get('최대가입나이', '0'),
+            '최소납입기간': '', '최대납입기간': '', '납입기간구분코드': '',
+            '최소제2보기개시나이': '', '최대제2보기개시나이': '', '제2보기개시나이구분코드': '',
+            '최소보험기간': '', '최대보험기간': '', '보험기간구분코드': '',
+        }]
+    return ages
+
+
+def _apply_join_age_postprocess(ages: List[dict], product_name: str) -> List[dict]:
+    """product_overrides.json 기반 + 상품별 가입가능나이 후처리."""
+    if not ages:
+        return ages
+
+    overrides = _load_overrides()
+    ja_overrides = overrides.get('join_age', {})
+    nfc_name = unicodedata.normalize('NFC', product_name)
+
+    # 1) JSON override 매칭 (action: fixed, min_age_floor)
+    for ov_key, ov_cfg in ja_overrides.items():
+        if ov_key.startswith('_'):
+            continue
+        if not isinstance(ov_cfg, dict):
+            continue
+        action = ov_cfg.get('action', '')
+        if not action:
+            continue
+        # + 구분 AND 매칭
+        keywords = ov_key.split('+')
+        if not all(kw in nfc_name for kw in keywords):
+            continue
+
+        if action == 'fixed':
+            # 직접 ages 리스트 반환
+            if 'ages' in ov_cfg:
+                return list(ov_cfg['ages'])
+            # ages_template: 매트릭스 생성 (스마트상해 2형용)
+            tmpl = ov_cfg.get('ages_template')
+            if tmpl:
+                # 기존 추출에서 INS 정보 가져오기
+                ins_val, ins_dvsn = '', ''
+                if ov_cfg.get('ins_from_extract'):
+                    for a in ages:
+                        if a.get('최소보험기간', ''):
+                            ins_val = a['최소보험기간']
+                            ins_dvsn = a.get('보험기간구분코드', '')
+                            break
+                result = []
+                for g in tmpl['genders']:
+                    for p in tmpl['payms']:
+                        result.append({
+                            '성별': g,
+                            '최소가입나이': tmpl.get('min_age', '0'),
+                            '최대가입나이': tmpl['max_age'],
+                            '최소보험기간': ins_val, '최대보험기간': ins_val,
+                            '보험기간구분코드': ins_dvsn,
+                            '최소납입기간': p, '최대납입기간': p,
+                            '납입기간구분코드': tmpl.get('paym_code', 'N'),
+                            '최소제2보기개시나이': '', '최대제2보기개시나이': '',
+                            '제2보기개시나이구분코드': '',
+                        })
+                return result
+
+        # min_age_floor는 CSV sale_nm 기준 매칭이 필요하므로
+        # map_product_code.py에서 처리 (extract 단계에서는 skip)
+
+    # 2) 상품별 코드 로직
+    if '진심가득' in nfc_name:
+        return _postprocess_jinsim(ages, nfc_name)
+
+    if '튼튼이' in nfc_name and '갱신' in nfc_name:
+        return _postprocess_tuntuni(ages)
+
+    if '기업재해보장' in nfc_name:
+        return _merge_paym_ranges(ages)
+
+    return ages
 
 
 # ──────────────────────────────────────────────
