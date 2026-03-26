@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from web.pipeline import (
@@ -21,6 +21,7 @@ from web.pipeline import (
     run_step2_payment_cycle,
     run_step3,
     run_step4,
+    run_step5,
 )
 
 app = FastAPI(title="사업방법서 데이터 추출 파이프라인 Demo")
@@ -62,7 +63,7 @@ async def pipeline_status(session_id: str):
 
 
 @app.get("/api/pipeline/{session_id}/run")
-async def run_step(session_id: str, step: int = Query(..., ge=1, le=4)):
+async def run_step(session_id: str, step: int = Query(..., ge=1, le=5)):
     session = sessions.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
@@ -189,6 +190,32 @@ async def run_step(session_id: str, step: int = Query(..., ge=1, le=4)):
                     "data": result,
                 })
 
+            elif step == 5:
+                yield send_event("status", {
+                    "step": 5, "substep": None,
+                    "status": "running", "message": "CSV 생성 중...",
+                })
+                result = await asyncio.to_thread(run_step5, session)
+
+                # Build download info (exclude csv_path for security)
+                download_data = {}
+                for ds, info in result.items():
+                    if "csv_path" in info:
+                        download_data[ds] = {
+                            "csv_filename": info["csv_filename"],
+                            "row_count": info["row_count"],
+                            "product_count": info["product_count"],
+                        }
+                    elif "error" in info:
+                        download_data[ds] = {"error": info["error"]}
+
+                yield send_event("result", {
+                    "step": 5, "substep": None,
+                    "status": "completed",
+                    "message": f"CSV 생성 완료 ({len(download_data)}개)",
+                    "data": download_data,
+                })
+
             yield send_event("done", {"step": step, "message": "완료"})
 
         except Exception as e:
@@ -220,6 +247,31 @@ async def get_result(session_id: str, step: int):
         raise HTTPException(status_code=400, detail=f"Step {step} 결과가 없습니다.")
 
     return {"step": step, "result": step_status.result}
+
+
+@app.get("/api/pipeline/{session_id}/download/{dataset}")
+async def download_csv(session_id: str, dataset: str):
+    session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+
+    step5 = session.steps.get(5)
+    if not step5 or step5.status != "completed" or not step5.result:
+        raise HTTPException(status_code=400, detail="CSV가 생성되지 않았습니다.")
+
+    ds_result = step5.result.get(dataset)
+    if not ds_result or "csv_path" not in ds_result:
+        raise HTTPException(status_code=404, detail=f"{dataset} CSV 파일이 없습니다.")
+
+    csv_path = Path(ds_result["csv_path"])
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="CSV 파일을 찾을 수 없습니다.")
+
+    return FileResponse(
+        path=str(csv_path),
+        filename=ds_result["csv_filename"],
+        media_type="text/csv; charset=utf-8-sig",
+    )
 
 
 @app.on_event("startup")

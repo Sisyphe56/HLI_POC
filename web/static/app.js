@@ -86,7 +86,7 @@ async function handleFile(file) {
 }
 
 function resetStepUI() {
-    for (let i = 1; i <= 4; i++) {
+    for (let i = 1; i <= 5; i++) {
         const el = document.getElementById(`step-${i}`);
         el.className = "step";
         const btn = document.getElementById(`btn-step-${i}`);
@@ -108,7 +108,7 @@ function resetStepUI() {
 }
 
 // Step button handlers
-for (let i = 1; i <= 4; i++) {
+for (let i = 1; i <= 5; i++) {
     document.getElementById(`btn-step-${i}`).addEventListener("click", () => runStep(i));
 }
 
@@ -160,6 +160,9 @@ async function runStep(step) {
         } else if (data.step === 4 && data.data) {
             stepResults.step4 = data.data;
             updateResultTabs();
+        } else if (data.step === 5 && data.data) {
+            stepResults.step5 = data.data;
+            updateResultTabs();
         }
 
         if (data.message) {
@@ -199,7 +202,7 @@ async function runStep(step) {
         }
 
         // Enable next step
-        if (step < 4) {
+        if (step < 5) {
             const nextBtn = document.getElementById(`btn-step-${step + 1}`);
             nextBtn.disabled = false;
         }
@@ -261,6 +264,7 @@ const TAB_CONFIG = {
     step2_join_age: { label: "가입가능나이", step: 2 },
     step3: { label: "코드매핑", step: 3 },
     step4: { label: "정답 검증", step: 4 },
+    step5: { label: "CSV 내보내기", step: 5 },
 };
 
 function updateResultTabs() {
@@ -295,6 +299,23 @@ function updateResultTabs() {
     renderResult(currentTab);
 }
 
+function openJsonInNewWindow(data, title) {
+    const jsonStr = JSON.stringify(data, null, 2);
+    const newWindow = window.open("", "_blank");
+    newWindow.document.write(`<!DOCTYPE html><html><head><title>${escapeHtml(title)} - JSON</title>
+        <style>body{margin:0;padding:20px;background:#1a1a2e;color:#e0e0e0;font-family:monospace;font-size:13px;}
+        pre{white-space:pre-wrap;word-break:break-all;}</style></head>
+        <body><pre>${escapeHtml(jsonStr)}</pre></body></html>`);
+    newWindow.document.close();
+}
+
+function buildJsonViewButton(key) {
+    const data = stepResults[key];
+    if (!data) return "";
+    const label = TAB_CONFIG[key]?.label || key;
+    return `<button class="btn btn-sm btn-json" onclick="openJsonInNewWindow(stepResults['${key}'], '${label}')">JSON 전체보기</button>`;
+}
+
 function renderResult(key) {
     const data = stepResults[key];
     if (!data) {
@@ -310,6 +331,14 @@ function renderResult(key) {
         renderStep3Result(data);
     } else if (key === "step4") {
         renderStep4Result(data);
+    } else if (key === "step5") {
+        renderStep5Result(data);
+    }
+
+    // Prepend JSON view button
+    const btnHtml = buildJsonViewButton(key);
+    if (btnHtml) {
+        resultContent.innerHTML = `<div class="json-btn-wrap">${btnHtml}</div>` + resultContent.innerHTML;
     }
 }
 
@@ -326,18 +355,40 @@ function renderStep2Result(key, data) {
 }
 
 function renderStep3Result(data) {
-    // Show per-dataset stats summary
+    const dsLabels = {
+        product_classification: "상품분류",
+        payment_cycle: "납입주기",
+        annuity_age: "보기개시나이",
+        insurance_period: "가입가능보기납기",
+        join_age: "가입가능나이",
+    };
+
+    // Collect all mapped rows across datasets and count unique (prod_dtcd, prod_itcd)
+    let allRows = [];
+    const uniquePairs = new Set();
+    for (const [ds, info] of Object.entries(data)) {
+        const rows = info.mapped_rows || [];
+        rows.forEach((row) => {
+            const dtcd = row.prod_dtcd || row.PROD_DTCD || "";
+            const itcd = row.prod_itcd || row.PROD_ITCD || "";
+            if (dtcd || itcd) {
+                uniquePairs.add(`${dtcd}||${itcd}`);
+            }
+        });
+        allRows = allRows.concat(rows.map((r) => ({ ...r, _dataset: dsLabels[ds] || ds })));
+    }
+
+    // Show per-dataset stats summary + unique pair count
     let html = '<div class="result-summary">';
+    html += `
+        <div class="summary-card">
+            <div class="label">유니크 (PROD_DTCD, PROD_ITCD)</div>
+            <div class="value">${uniquePairs.size}</div>
+        </div>
+    `;
     for (const [ds, info] of Object.entries(data)) {
         const stats = info.stats || {};
-        const label = {
-            product_classification: "상품분류",
-            payment_cycle: "납입주기",
-            annuity_age: "보기개시나이",
-            insurance_period: "가입가능보기납기",
-            join_age: "가입가능나이",
-        }[ds] || ds;
-
+        const label = dsLabels[ds] || ds;
         html += `
             <div class="summary-card">
                 <div class="label">${label}</div>
@@ -347,12 +398,10 @@ function renderStep3Result(data) {
     }
     html += "</div>";
 
-    // Show first dataset's mapped rows as table
-    const firstDs = Object.keys(data)[0];
-    if (firstDs && data[firstDs].mapped_rows) {
-        const rows = data[firstDs].mapped_rows;
-        html += buildTableHtml(rows, [
-            "isrn_kind_dtcd", "isrn_kind_itcd", "isrn_kind_sale_nm",
+    // Show all datasets' mapped rows as a single table
+    if (allRows.length > 0) {
+        html += buildTableHtml(allRows, [
+            "_dataset", "isrn_kind_dtcd", "isrn_kind_itcd", "isrn_kind_sale_nm",
             "prod_dtcd", "prod_itcd", "상품명",
         ]);
     }
@@ -412,6 +461,39 @@ function renderStep4Result(data) {
         html += "</tbody></table></div>";
     }
 
+    resultContent.innerHTML = html;
+}
+
+function renderStep5Result(data) {
+    const dsLabels = {
+        payment_cycle: "납입주기",
+        annuity_age: "보기개시나이",
+        insurance_period: "가입가능보기납기",
+        join_age: "가입가능나이",
+    };
+
+    let html = '<div class="download-grid">';
+    for (const [ds, info] of Object.entries(data)) {
+        const label = dsLabels[ds] || ds;
+        if (info.error) {
+            html += `
+                <div class="download-card error">
+                    <div class="download-label">${label}</div>
+                    <div class="download-error">${escapeHtml(info.error)}</div>
+                </div>
+            `;
+        } else {
+            html += `
+                <div class="download-card">
+                    <div class="download-label">${label}</div>
+                    <div class="download-stats">${info.product_count}개 상품 / ${info.row_count}행</div>
+                    <div class="download-filename">${escapeHtml(info.csv_filename)}</div>
+                    <a class="btn btn-download" href="/api/pipeline/${sessionId}/download/${ds}" download="${escapeHtml(info.csv_filename)}">CSV 다운로드</a>
+                </div>
+            `;
+        }
+    }
+    html += '</div>';
     resultContent.innerHTML = html;
 }
 
