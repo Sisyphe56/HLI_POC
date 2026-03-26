@@ -31,7 +31,7 @@ class PipelineSession:
     steps: Dict[int, StepStatus] = field(default_factory=dict)
 
     def __post_init__(self):
-        for i in range(1, 5):
+        for i in range(1, 6):
             self.steps[i] = StepStatus()
         # Step 2 has substeps
         self.steps[2].substeps = {
@@ -54,7 +54,7 @@ def create_session(pdf_bytes: bytes, filename: str) -> PipelineSession:
     session_id = uuid.uuid4().hex[:12]
     work_dir = Path("/tmp/hli_poc") / session_id
     work_dir.mkdir(parents=True, exist_ok=True)
-    pdf_path = work_dir / "input.pdf"
+    pdf_path = work_dir / filename
     pdf_path.write_bytes(pdf_bytes)
     return PipelineSession(
         session_id=session_id,
@@ -267,6 +267,7 @@ def run_step3(session: PipelineSession) -> Dict[str, Any]:
         process_file,
         write_json,
         DEFAULT_MAPPING_CSV,
+        _apply_sibling_fallback_inline,
     )
 
     session.steps[3].status = "running"
@@ -296,6 +297,11 @@ def run_step3(session: PipelineSession) -> Dict[str, Any]:
             mapped_rows, stats, matched_ids = process_file(
                 source_json, mapping_rows, config,
             )
+            sibling_count = _apply_sibling_fallback_inline(
+                mapped_rows, matched_ids, mapping_rows,
+            )
+            if sibling_count:
+                stats["sibling_fallback"] = sibling_count
             _, prefix = DATASET_FILE_MAP[ds_name]
             out_path = code_map_dir / f"{prefix}{source_json.name}"
             write_json(out_path, mapped_rows)
@@ -386,12 +392,18 @@ def run_step4(session: PipelineSession) -> Dict[str, Any]:
                 prod_dtcd = normalize_code(mapped_row.get("prod_dtcd", ""))
                 prod_itcd = normalize_code(mapped_row.get("prod_itcd", ""))
 
+                result_base = {
+                    "product": mapped_row.get("상품명", ""),
+                    "isrn_kind_dtcd": dtcd,
+                    "isrn_kind_itcd": itcd,
+                    "prod_dtcd": prod_dtcd,
+                    "prod_itcd": prod_itcd,
+                }
+
                 if not (dtcd and itcd and sale_nm):
-                    comparison_results.append({
-                        "product": mapped_row.get("상품명", ""),
-                        "matched": False,
-                        "reason": "코드 없음",
-                    })
+                    result_base["matched"] = False
+                    result_base["reason"] = "코드 없음"
+                    comparison_results.append(result_base)
                     continue
 
                 key = tuple(
@@ -414,23 +426,15 @@ def run_step4(session: PipelineSession) -> Dict[str, Any]:
                         answer_rows = filtered
 
                 if not answer_rows:
-                    comparison_results.append({
-                        "product": mapped_row.get("상품명", ""),
-                        "isrn_kind_dtcd": dtcd,
-                        "isrn_kind_itcd": itcd,
-                        "matched": False,
-                        "reason": "정답에 없음",
-                    })
+                    result_base["matched"] = False
+                    result_base["reason"] = "정답에 없음"
+                    comparison_results.append(result_base)
                     continue
 
                 comparison = config.compare_fn(mapped_row, answer_rows)
-                comparison_results.append({
-                    "product": mapped_row.get("상품명", ""),
-                    "isrn_kind_dtcd": dtcd,
-                    "isrn_kind_itcd": itcd,
-                    "matched": comparison.get("matched", False),
-                    "reason": comparison.get("reason", ""),
-                })
+                result_base["matched"] = comparison.get("matched", False)
+                result_base["reason"] = comparison.get("reason", "")
+                comparison_results.append(result_base)
 
             total = len(comparison_results)
             matched = sum(1 for r in comparison_results if r["matched"])
@@ -454,6 +458,75 @@ def run_step4(session: PipelineSession) -> Dict[str, Any]:
     session.steps[4].status = "completed"
     session.steps[4].message = "정답 비교 완료"
     session.steps[4].result = results
+    return results
+
+
+# ── Step 5: CSV Export ──
+
+EXPORT_DATASETS = ["payment_cycle", "annuity_age", "insurance_period", "join_age"]
+
+
+def run_step5(session: PipelineSession) -> Dict[str, Any]:
+    from write_product_data import (
+        load_config,
+        build_field_map,
+        json_to_csv_rows,
+        write_csv,
+    )
+
+    session.steps[5].status = "running"
+    session.steps[5].message = "CSV 생성 중..."
+
+    code_map_dir = session.work_dir / "코드매핑"
+    csv_dir = session.work_dir / "결과"
+    csv_dir.mkdir(parents=True, exist_ok=True)
+
+    results = {}
+
+    for ds_name in EXPORT_DATASETS:
+        try:
+            config = load_config(ds_name)
+            _, prefix = DATASET_FILE_MAP[ds_name]
+
+            # Find mapped JSON
+            mapped_file = None
+            candidates = list(code_map_dir.glob(f"{prefix}*.json"))
+            if candidates:
+                mapped_file = candidates[0]
+
+            if not mapped_file or not mapped_file.exists():
+                results[ds_name] = {"error": "매핑 파일 없음"}
+                continue
+
+            with mapped_file.open("r", encoding="utf-8") as f:
+                mapped_data = json.load(f)
+
+            data_field = config["data_field"]
+            csv_columns = config.get("output_csv_columns", [])
+            if not csv_columns:
+                results[ds_name] = {"error": "output_csv_columns 미설정"}
+                continue
+
+            field_map = build_field_map(config)
+            rows = json_to_csv_rows(mapped_data, data_field, csv_columns, field_map)
+
+            korean_name = config["korean_name"]
+            csv_filename = f"{korean_name}_{session.filename.replace('.pdf', '')}.csv"
+            csv_path = csv_dir / csv_filename
+            write_csv(rows, csv_columns, csv_path, encoding="utf-8-sig")
+
+            results[ds_name] = {
+                "csv_path": str(csv_path),
+                "csv_filename": csv_filename,
+                "row_count": len(rows),
+                "product_count": len(mapped_data),
+            }
+        except Exception as e:
+            results[ds_name] = {"error": str(e)}
+
+    session.steps[5].status = "completed"
+    session.steps[5].message = f"CSV 생성 완료 ({len([r for r in results.values() if 'csv_path' in r])}개)"
+    session.steps[5].result = results
     return results
 
 

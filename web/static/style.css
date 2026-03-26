@@ -447,3 +447,86 @@ header h1 {
     padding: 40px;
     color: #aaa;
 }
+
+.json-btn-wrap {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
+}
+
+.btn-json {
+    background: #34495e;
+    color: white;
+    border: none;
+    padding: 5px 12px;
+    border-radius: 4px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-json:hover {
+    background: #2c3e50;
+}
+
+/* Download cards (Step 5) */
+.download-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+}
+
+.download-card {
+    background: #f8f9fa;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.download-card.error {
+    border-color: #e74c3c;
+}
+
+.download-label {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #2c3e50;
+}
+
+.download-stats {
+    font-size: 0.82rem;
+    color: #666;
+}
+
+.download-filename {
+    font-size: 0.75rem;
+    color: #999;
+    word-break: break-all;
+}
+
+.download-error {
+    font-size: 0.82rem;
+    color: #e74c3c;
+}
+
+.btn-download {
+    display: inline-block;
+    text-align: center;
+    background: #27ae60;
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.2s;
+    margin-top: auto;
+}
+
+.btn-download:hover {
+    background: #219a52;
+}
