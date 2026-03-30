@@ -319,10 +319,40 @@ def build_annuity_age_row(record: dict, csv_match: Optional[Dict]) -> dict:
     return row
 
 
+def _apply_mapped_period_filter(periods: list, sale_nm: str) -> list:
+    """매핑 후 sale_nm 기준으로 insurance_period override filter 적용."""
+    overrides_path = PROJECT_ROOT / 'config' / 'product_overrides.json'
+    if not overrides_path.exists() or not periods:
+        return periods
+    with overrides_path.open('r', encoding='utf-8') as f:
+        ip_overrides = json.load(f).get('insurance_period', {})
+    nfc_nm = unicodedata.normalize('NFC', sale_nm)
+    for key, cfg in ip_overrides.items():
+        if key.startswith('_') or not isinstance(cfg, dict):
+            continue
+        if cfg.get('action') != 'filter':
+            continue
+        keywords = key.split('+')
+        if not all(kw in nfc_nm for kw in keywords):
+            continue
+        filtered = list(periods)
+        inc_vals = cfg.get('include_납입기간값')
+        if inc_vals:
+            filtered = [p for p in filtered if p.get('납입기간값') in inc_vals]
+        for combo in cfg.get('exclude_combinations', []):
+            filtered = [p for p in filtered if not all(p.get(k) == v for k, v in combo.items())]
+        return filtered
+    return periods
+
+
 def build_insurance_period_row(record: dict, csv_match: Optional[Dict]) -> dict:
     row = _base_output_row(record, csv_match)
     if '가입가능보기납기' in record:
-        row['가입가능보기납기'] = record['가입가능보기납기']
+        periods = record['가입가능보기납기']
+        sale_nm = (csv_match or {}).get('isrn_kind_sale_nm', '')
+        if sale_nm:
+            periods = _apply_mapped_period_filter(periods, sale_nm)
+        row['가입가능보기납기'] = periods
     return row
 
 
@@ -405,10 +435,43 @@ def _apply_min_age_floor(ages: List[dict], sale_nm: str) -> List[dict]:
     return ages
 
 
+def _dedup_age_gender(ages: List[dict]) -> List[dict]:
+    """성별='' 레코드가 있으면 같은 range의 성별=1/2 레코드 제거 (multi-version 중복 방지)."""
+    # 성별 없는 entries의 시그니처 수집
+    neutral_sigs: set = set()
+    for a in ages:
+        if not a.get('성별'):
+            sig = (
+                a.get('최소가입나이', ''), a.get('최대가입나이', ''),
+                a.get('최소보험기간', ''), a.get('최대보험기간', ''), a.get('보험기간구분코드', ''),
+                a.get('최소납입기간', ''), a.get('최대납입기간', ''), a.get('납입기간구분코드', ''),
+                a.get('최소제2보기개시나이', ''), a.get('최대제2보기개시나이', ''), a.get('제2보기개시나이구분코드', ''),
+            )
+            neutral_sigs.add(sig)
+
+    if not neutral_sigs:
+        return ages
+
+    result = []
+    for a in ages:
+        if a.get('성별'):
+            sig = (
+                a.get('최소가입나이', ''), a.get('최대가입나이', ''),
+                a.get('최소보험기간', ''), a.get('최대보험기간', ''), a.get('보험기간구분코드', ''),
+                a.get('최소납입기간', ''), a.get('최대납입기간', ''), a.get('납입기간구분코드', ''),
+                a.get('최소제2보기개시나이', ''), a.get('최대제2보기개시나이', ''), a.get('제2보기개시나이구분코드', ''),
+            )
+            if sig in neutral_sigs:
+                continue  # 동일 범위의 성별='' 존재, 중복 제거
+        result.append(a)
+    return result
+
+
 def build_join_age_row(record: dict, csv_match: Optional[Dict]) -> dict:
     row = _base_output_row(record, csv_match)
     if '가입가능나이' in record:
         ages = record['가입가능나이']
+        ages = _dedup_age_gender(ages)
         sale_nm = (csv_match or {}).get('isrn_kind_sale_nm', '')
         ages = _apply_min_age_floor(ages, sale_nm)
         row['가입가능나이'] = ages
@@ -565,6 +628,90 @@ def generate_csv_based_report(
         'file_details': file_stats,
         'csv_rows': csv_rows_report,
     }
+
+
+# ---------------------------------------------------------------------------
+# sedata_alias: 하나의 docx에서 추출한 세트데이터를 alias 상품에도 복사
+# ---------------------------------------------------------------------------
+
+OVERRIDES_PATH = PROJECT_ROOT / 'config' / 'product_overrides.json'
+
+
+def _apply_sedata_alias(input_dir: Path, config) -> int:
+    """product_overrides.json의 sedata_alias 규칙에 따라 alias 입력 파일 생성.
+
+    Returns: 생성된 alias 파일 수.
+    """
+    if not OVERRIDES_PATH.exists():
+        return 0
+    with OVERRIDES_PATH.open('r', encoding='utf-8') as f:
+        overrides = json.load(f)
+    rules = overrides.get('sedata_alias', {}).get('rules', [])
+    if not rules:
+        return 0
+
+    import copy
+    created = 0
+    input_files = sorted(input_dir.glob('*.json'))
+
+    for rule in rules:
+        source_match = rule.get('source_match', '')
+        alias_stem = rule.get('alias_output_stem', '')
+        if not source_match or not alias_stem:
+            continue
+
+        source_file = None
+        for fp in input_files:
+            if source_match in unicodedata.normalize('NFC', fp.name):
+                source_file = fp
+                break
+        if source_file is None:
+            continue
+
+        rows = load_json(source_file)
+        alias_rows = copy.deepcopy(rows)
+
+        # filter_include
+        if 'filter_include' in rule:
+            includes = rule['filter_include']
+            alias_rows = [r for r in alias_rows
+                          if any(inc in r.get('상품명', '') for inc in includes)]
+
+        # filter_exclude
+        if 'filter_exclude' in rule:
+            excludes = rule['filter_exclude']
+            alias_rows = [r for r in alias_rows
+                          if not any(exc in r.get('상품명', '') for exc in excludes)]
+
+        # name_replace
+        replace_cfg = rule.get('name_replace', {})
+        if replace_cfg:
+            from_str = replace_cfg['from']
+            to_str = replace_cfg['to']
+            for r in alias_rows:
+                for field in ('상품명칭', '상품명'):
+                    if field in r:
+                        r[field] = r[field].replace(from_str, to_str)
+
+        # value_overrides: 필드 값 일괄 변경 (예: 가입가능나이 최소나이 변경)
+        val_overrides = rule.get('value_overrides', {})
+        if val_overrides:
+            for r in alias_rows:
+                for field_path, new_val in val_overrides.items():
+                    parts = field_path.split('.')
+                    if len(parts) == 2:
+                        arr_field, sub_field = parts
+                        if arr_field in r and isinstance(r[arr_field], list):
+                            for item in r[arr_field]:
+                                if isinstance(item, dict) and sub_field in item:
+                                    item[sub_field] = new_val
+
+        if alias_rows:
+            alias_path = input_dir / f'{alias_stem}.json'
+            write_json(alias_path, alias_rows)
+            created += 1
+
+    return created
 
 
 # ---------------------------------------------------------------------------
@@ -779,6 +926,11 @@ def main():
     # --- 디렉토리 모드 ---
     if not input_dir.exists():
         raise FileNotFoundError(f'입력 폴더를 찾지 못했습니다: {input_dir}')
+
+    # sedata_alias: alias 입력 파일 생성
+    alias_count = _apply_sedata_alias(input_dir, config)
+    if alias_count:
+        print(f'sedata_alias: {alias_count} alias files created')
 
     input_files = sorted(input_dir.glob('*.json'))
     if not input_files:

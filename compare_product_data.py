@@ -317,6 +317,31 @@ def _extract_generic_answer_set(answer_rows: list, ds_config: dict) -> set:
 # ──────────────────────────────────────────────
 
 
+def _apply_gender_dedup(mapped_set: set) -> set:
+    """성별='' 엔트리가 있으면 같은 range의 성별=1/2 엔트리 제거 (multi-version 중복 방지).
+
+    튜플 인덱스 2가 성별 필드 (join_age 12-field 전용).
+    """
+    if not mapped_set:
+        return mapped_set
+    sample = next(iter(mapped_set))
+    if len(sample) < 3:
+        return mapped_set
+    # 성별='' 인 엔트리의 시그니처 수집 (성별 제외)
+    neutral_sigs: set = set()
+    for t in mapped_set:
+        if not t[2]:  # 성별 empty
+            neutral_sigs.add(t[:2] + t[3:])
+    if not neutral_sigs:
+        return mapped_set
+    result = set()
+    for t in mapped_set:
+        if t[2] and (t[:2] + t[3:]) in neutral_sigs:
+            continue  # 동일 range의 성별='' 엔트리 존재 → 성별 있는 것 제거
+        result.add(t)
+    return result
+
+
 def _apply_period_strip_fallback(mapped_set: set, answer_set: set) -> set:
     """기간 제거 fallback: 정답이 기간정보 없는 경우 추출 결과에서 기간 제거."""
     if not mapped_set or not answer_set or mapped_set == answer_set:
@@ -462,6 +487,8 @@ def generic_answer_report(
         mapped_vals = mapped_index_4.get(key4) or mapped_index_2.get((dtcd, itcd))
 
         # 특수 규칙 적용
+        if 'gender_dedup' in special_rules and mapped_vals:
+            mapped_vals = _apply_gender_dedup(mapped_vals)
         if 'period_strip_fallback' in special_rules and mapped_vals and answer_vals:
             mapped_vals = _apply_period_strip_fallback(mapped_vals, answer_vals)
 
