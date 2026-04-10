@@ -89,27 +89,41 @@ def is_annuity_product(row: dict) -> bool:
 # PDF 텍스트 추출
 # ──────────────────────────────────────────────
 
-def extract_docx_content(docx_path: Path) -> Tuple[List[str], List[List]]:
+def extract_docx_content(docx_path: Path) -> Tuple[List[str], List[List], List[str]]:
+    """Word 문서에서 텍스트 라인과 모든 표를 문서 순서대로 추출.
+
+    Returns:
+        (lines, all_tables, table_sections) 형태의 튜플.
+        table_sections: 각 테이블 직전 섹션 헤딩 ('최초계약', '갱신계약', 또는 '').
+    """
     doc = Document(str(docx_path))
     lines: List[str] = []
     all_tables: List[List] = []
+    table_sections: List[str] = []
 
+    _current_section = ''
     for child in doc.element.body:
         if child.tag == qn('w:p'):
             normalized = normalize_ws(Paragraph(child, doc).text)
             if normalized:
                 lines.append(normalized)
+                stripped = re.sub(r'\s+', '', normalized)
+                if '최초계약' in stripped:
+                    _current_section = '최초계약'
+                elif '갱신계약' in stripped:
+                    _current_section = '갱신계약'
         elif child.tag == qn('w:tbl'):
             table = DocxTable(child, doc)
             t = [[cell.text for cell in row.cells] for row in table.rows]
             all_tables.append(t)
+            table_sections.append(_current_section)
             for row in t:
                 for cell_text in row:
                     normalized = normalize_ws(cell_text)
                     if normalized:
                         lines.append(normalized)
 
-    return lines, all_tables
+    return lines, all_tables, table_sections
 
 
 # ──────────────────────────────────────────────
@@ -2840,16 +2854,43 @@ def load_period_data(period_dir: Path, json_name: str) -> List[dict]:
     return data if isinstance(data, list) else []
 
 
+def _get_section_filter(docx_path: Path) -> Optional[str]:
+    """product_overrides.json의 table_section_filter 설정에 따라 사용할 섹션을 반환."""
+    overrides = _load_overrides()
+    for rule in overrides.get('table_section_filter', {}).get('rules', []):
+        keyword = rule.get('filename_contains', '')
+        if keyword and keyword in docx_path.name:
+            return rule.get('use_section', '')
+    return None
+
+
+def _filter_tables_by_section(
+    all_tables: List[List],
+    table_sections: List[str],
+    section: str,
+) -> List[List]:
+    """지정 섹션에 해당하는 테이블만 반환."""
+    return [t for t, s in zip(all_tables, table_sections) if s == section]
+
+
 def process_single(
     docx_path: Path,
     json_path: Path,
     period_dir: Path,
 ) -> List[dict]:
-    docx_lines, docx_tables = extract_docx_content(docx_path)
+    docx_lines, docx_tables, table_sections = extract_docx_content(docx_path)
     with json_path.open('r', encoding='utf-8') as f:
         rows = json.load(f)
     if not isinstance(rows, list):
         rows = []
+
+    # table_section_filter 설정에 따라 특정 섹션 테이블만 사용
+    tables_for_extract = docx_tables
+    section = _get_section_filter(docx_path)
+    if section:
+        filtered = _filter_tables_by_section(docx_tables, table_sections, section)
+        if filtered:
+            tables_for_extract = filtered
 
     # 가입가능보기납기 데이터 로드
     period_data = load_period_data(period_dir, json_path.name)
@@ -2858,7 +2899,7 @@ def process_single(
         merge_join_age_info(
             r if isinstance(r, dict) else {},
             docx_lines,
-            docx_tables,
+            tables_for_extract,
             period_data,
         )
         for r in rows

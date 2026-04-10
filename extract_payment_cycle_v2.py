@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from docx import Document
+from docx.oxml.ns import qn
+from docx.table import Table as DocxTable
+from docx.text.paragraph import Paragraph
 
 from extract_product_classification_v2 import extract_docx
 
@@ -425,21 +428,56 @@ def parse_rules_from_table(table: List[List[Optional[str]]], detail_tokens: Opti
     return rules
 
 
+def _extract_docx_with_sections(docx_path: Path):
+    """Word 문서에서 라인, 테이블, 테이블별 섹션 타입을 추출."""
+    doc = Document(str(docx_path))
+    lines: List[str] = []
+    tables: List[List[List[Optional[str]]]] = []
+    table_sections: List[str] = []
+
+    _current_section = ''
+    for child in doc.element.body:
+        if child.tag == qn('w:p'):
+            text = Paragraph(child, doc).text.strip()
+            if text:
+                lines.append(text)
+                stripped = re.sub(r'\s+', '', text)
+                if '최초계약' in stripped:
+                    _current_section = '최초계약'
+                elif '갱신계약' in stripped:
+                    _current_section = '갱신계약'
+        elif child.tag == qn('w:tbl'):
+            table = DocxTable(child, doc)
+            t = [[cell.text for cell in row.cells] for row in table.rows]
+            tables.append(t)
+            table_sections.append(_current_section)
+
+    return lines, tables, table_sections
+
+
+def _get_section_filter(docx_path: Path) -> Optional[str]:
+    """product_overrides.json의 table_section_filter 설정에 따라 사용할 섹션을 반환."""
+    overrides = _load_overrides()
+    for rule in overrides.get('table_section_filter', {}).get('rules', []):
+        keyword = rule.get('filename_contains', '')
+        if keyword and keyword in docx_path.name:
+            return rule.get('use_section', '')
+    return None
+
+
 def extract_cycle_rules(
     docx_path: Path,
     detail_tokens: Optional[Sequence[str]] = None,
+    *,
+    section_filter: Optional[str] = None,
 ) -> Tuple[List[CycleRule], List[str]]:
-    lines: List[str] = []
-    tables: List[List[List[Optional[str]]]] = []
+    lines, tables, table_sections = _extract_docx_with_sections(docx_path)
 
-    doc = Document(str(docx_path))
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if text:
-            lines.append(text)
-    for table in doc.tables:
-        t = [[cell.text for cell in row.cells] for row in table.rows]
-        tables.append(t)
+    # table_section_filter 설정에 따라 특정 섹션 테이블만 사용
+    if section_filter:
+        filtered = [t for t, s in zip(tables, table_sections) if s == section_filter]
+        if filtered:
+            tables = filtered
 
     full_text = '\n'.join(lines)
     rules, default_cycles = parse_rules_from_text(full_text, detail_tokens)
@@ -631,7 +669,8 @@ def extract_payment_cycle_for_docx(docx_path: Path, detail_tokens: Optional[Sequ
     if not product_records:
         return []
 
-    rules, default_cycles = extract_cycle_rules(docx_path, detail_tokens)
+    section = _get_section_filter(docx_path)
+    rules, default_cycles = extract_cycle_rules(docx_path, detail_tokens, section_filter=section)
     return enrich_records_with_cycles(product_records, rules, default_cycles=default_cycles)
 
 

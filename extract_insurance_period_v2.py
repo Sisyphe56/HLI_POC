@@ -89,21 +89,36 @@ def is_annuity_product(row: dict) -> bool:
 # PDF 텍스트 추출
 # ──────────────────────────────────────────────
 
-def extract_docx_content(docx_path: Path) -> Tuple[List[str], List[List]]:
-    """Word 문서에서 텍스트 라인과 모든 표를 문서 순서대로 추출."""
+def extract_docx_content(docx_path: Path) -> Tuple[List[str], List[List], List[str]]:
+    """Word 문서에서 텍스트 라인과 모든 표를 문서 순서대로 추출.
+
+    Returns:
+        (lines, all_tables, table_sections) 형태의 튜플.
+        table_sections: all_tables와 같은 길이의 리스트로, 각 테이블 직전
+        섹션 헤딩을 기록 ('최초계약', '갱신계약', 또는 빈 문자열).
+    """
     doc = Document(str(docx_path))
     lines: List[str] = []
     all_tables: List[List] = []
+    table_sections: List[str] = []
 
+    _current_section = ''
     for child in doc.element.body:
         if child.tag == qn('w:p'):
             normalized = normalize_ws(Paragraph(child, doc).text)
             if normalized:
                 lines.append(normalized)
+                # 실손 문서 섹션 헤딩 추적
+                stripped = re.sub(r'\s+', '', normalized)
+                if '최초계약' in stripped:
+                    _current_section = '최초계약'
+                elif '갱신계약' in stripped:
+                    _current_section = '갱신계약'
         elif child.tag == qn('w:tbl'):
             table = DocxTable(child, doc)
             t = [[cell.text for cell in row.cells] for row in table.rows]
             all_tables.append(t)
+            table_sections.append(_current_section)
             # Also add table cell text as lines for pattern matching
             for row in t:
                 for cell_text in row:
@@ -111,7 +126,7 @@ def extract_docx_content(docx_path: Path) -> Tuple[List[str], List[List]]:
                     if normalized:
                         lines.append(normalized)
 
-    return lines, all_tables
+    return lines, all_tables, table_sections
 
 
 def extract_docx_lines(docx_path: Path) -> List[str]:
@@ -879,6 +894,31 @@ def merge_period_info(
     ins_periods_raw = extract_insurance_periods(pdf_lines, product_name)
     pay_periods_raw, has_jeonginap = extract_payment_periods(pdf_lines, product_name)
 
+    # 실손 등 테이블 기반 기간 추출: 텍스트 추출 실패 시 테이블에서 직접 추출
+    if not ins_periods_raw and pdf_tables:
+        for tbl in pdf_tables:
+            if len(tbl) < 2:
+                continue
+            header = [normalize_ws(c) for c in tbl[0]]
+            if '보험기간' in header:
+                col_idx = header.index('보험기간')
+                for data_row in tbl[1:]:
+                    val = normalize_ws(data_row[col_idx]) if col_idx < len(data_row) else ''
+                    m = re.match(r'(\d+)\s*년', val)
+                    if m:
+                        ins_periods_raw.add(m.group(1) + '년')
+    if not pay_periods_raw and not has_jeonginap and pdf_tables:
+        for tbl in pdf_tables:
+            if len(tbl) < 2:
+                continue
+            header = [normalize_ws(c) for c in tbl[0]]
+            if '납입기간' in header:
+                col_idx = header.index('납입기간')
+                for data_row in tbl[1:]:
+                    val = normalize_ws(data_row[col_idx]) if col_idx < len(data_row) else ''
+                    if '전기납' in val:
+                        has_jeonginap = True
+
     # context 기반 필터링: 상품명에 매칭되는 기간만 유지
     # 1) 테이블 기반 context map (H종신 등 명시적 헤더 테이블)
     pay_ctx_map: Dict[str, Set[str]] = {}
@@ -1338,13 +1378,44 @@ def _apply_period_overrides(results: List[dict]) -> List[dict]:
     return results
 
 
+def _get_section_filter(docx_path: Path) -> Optional[str]:
+    """product_overrides.json의 table_section_filter 설정에 따라 사용할 섹션을 반환.
+
+    파일명이 규칙에 매칭되면 해당 섹션명(예: '최초계약')을, 아니면 None을 반환.
+    """
+    overrides = _load_overrides()
+    for rule in overrides.get('table_section_filter', {}).get('rules', []):
+        keyword = rule.get('filename_contains', '')
+        if keyword and keyword in docx_path.name:
+            return rule.get('use_section', '')
+    return None
+
+
+def _filter_tables_by_section(
+    all_tables: List[List],
+    table_sections: List[str],
+    section: str,
+) -> List[List]:
+    """지정 섹션에 해당하는 테이블만 반환."""
+    return [t for t, s in zip(all_tables, table_sections) if s == section]
+
+
 def process_single(docx_path: Path, json_path: Path) -> List[dict]:
-    docx_lines, docx_tables = extract_docx_content(docx_path)
+    docx_lines, docx_tables, table_sections = extract_docx_content(docx_path)
     with json_path.open('r', encoding='utf-8') as f:
         rows = json.load(f)
     if not isinstance(rows, list):
         rows = []
-    results = [merge_period_info(r if isinstance(r, dict) else {}, docx_lines, docx_tables) for r in rows]
+
+    # table_section_filter 설정에 따라 특정 섹션 테이블만 사용
+    tables_for_extract = docx_tables
+    section = _get_section_filter(docx_path)
+    if section:
+        filtered = _filter_tables_by_section(docx_tables, table_sections, section)
+        if filtered:
+            tables_for_extract = filtered
+
+    results = [merge_period_info(r if isinstance(r, dict) else {}, docx_lines, tables_for_extract) for r in rows]
     return _apply_period_overrides(results)
 
 
