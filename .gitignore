@@ -1,5 +1,9 @@
 *.DS_Store
 
+# Python
+__pycache__/
+*.pyc
+
 # 출력 결과물 (JSON) 제외
 상품분류/
 납입주기/
