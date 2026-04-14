@@ -4,9 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hanwha.setdata.config.OverridesConfig;
 import com.hanwha.setdata.docx.DocxContent;
-import com.hanwha.setdata.docx.DocxReader;
 import com.hanwha.setdata.model.ProductRecord;
 import com.hanwha.setdata.output.PythonStyleJson;
+import com.hanwha.setdata.store.DocxStore;
+import com.hanwha.setdata.store.DocxStoreAdapters;
+import com.hanwha.setdata.store.SqliteDocxStore;
 
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
@@ -26,12 +28,13 @@ import java.util.Map;
 public final class InsurancePeriodExtractor {
 
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final DocxReader DOCX_READER = new DocxReader();
 
     private final OverridesConfig config;
+    private final DocxStore store;
 
-    public InsurancePeriodExtractor(OverridesConfig config) {
+    public InsurancePeriodExtractor(OverridesConfig config, DocxStore store) {
         this.config = config;
+        this.store = store;
     }
 
     /**
@@ -39,7 +42,7 @@ public final class InsurancePeriodExtractor {
      * the fully-processed period rows.
      */
     public List<Map<String, Object>> extract(Path docxPath, Path classificationJsonPath) throws IOException {
-        DocxContent content = DOCX_READER.read(docxPath);
+        DocxContent content = DocxStoreAdapters.toDocxContent(store.get(docxPath));
 
         List<Map<String, Object>> rows = loadRows(classificationJsonPath);
 
@@ -139,7 +142,8 @@ public final class InsurancePeriodExtractor {
 
         OverridesConfig cfg = (overridesPath != null && Files.exists(overridesPath))
                 ? OverridesConfig.load(overridesPath) : null;
-        InsurancePeriodExtractor extractor = new InsurancePeriodExtractor(cfg);
+        DocxStore store = new SqliteDocxStore(targetDir.getParent().resolve("cache/docx_cache.db"));
+        InsurancePeriodExtractor extractor = new InsurancePeriodExtractor(cfg, store);
 
         if (outputDir != null) Files.createDirectories(outputDir);
 

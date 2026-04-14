@@ -7,7 +7,11 @@ import com.hanwha.setdata.extract.cycle.PaymentCycleExtractor;
 import com.hanwha.setdata.extract.joinage.JoinAgeExtractor;
 import com.hanwha.setdata.extract.period.InsurancePeriodExtractor;
 import com.hanwha.setdata.mapping.MapProductCode;
+import com.hanwha.setdata.store.SqliteDocxStore;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -71,6 +75,22 @@ public final class Main {
     }
 
     private static void runAll(String[] passthrough) throws Exception {
+        // Pre-cache all docx files into SQLite
+        Path root = Paths.get(".").toAbsolutePath().normalize();
+        Path cur = root;
+        for (int i = 0; i < 5; i++) {
+            Path candidate = cur.resolve("사업방법서_워드");
+            if (Files.isDirectory(candidate)) {
+                System.out.println("==> docx cache");
+                SqliteDocxStore store = new SqliteDocxStore(cur.resolve("cache/docx_cache.db"));
+                store.parseAll(candidate);
+                store.close();
+                break;
+            }
+            if (cur.getParent() == null) break;
+            cur = cur.getParent();
+        }
+
         // Extraction stages (order matters: period/annuity/joinage consume
         // 상품분류 JSON; joinage also consumes 보기납기 JSON).
         System.out.println("==> classify");

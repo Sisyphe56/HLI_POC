@@ -6,6 +6,9 @@ import com.hanwha.setdata.config.OverridesConfig;
 import com.hanwha.setdata.extract.ProductClassificationExtractor;
 import com.hanwha.setdata.model.ProductRecord;
 import com.hanwha.setdata.output.PythonStyleJson;
+import com.hanwha.setdata.store.DocxStore;
+import com.hanwha.setdata.store.DocxStoreAdapters;
+import com.hanwha.setdata.store.SqliteDocxStore;
 import com.hanwha.setdata.util.Normalizer;
 
 import java.io.IOException;
@@ -40,12 +43,14 @@ public final class PaymentCycleExtractor {
     }
 
     private final OverridesConfig config;
+    private final DocxStore store;
     private final ProductClassificationExtractor classificationExtractor;
     private final List<String> detailContextTokens;
 
-    public PaymentCycleExtractor(OverridesConfig config, List<String> detailContextTokens) {
+    public PaymentCycleExtractor(OverridesConfig config, List<String> detailContextTokens, DocxStore store) {
         this.config = config;
-        this.classificationExtractor = new ProductClassificationExtractor(config);
+        this.store = store;
+        this.classificationExtractor = new ProductClassificationExtractor(config, store);
         this.detailContextTokens = detailContextTokens == null ? List.of() : detailContextTokens;
     }
 
@@ -56,7 +61,7 @@ public final class PaymentCycleExtractor {
 
         String section = config != null ? config.tableSectionFilter(docxPath.getFileName().toString()) : "";
 
-        PcCycleDocx.Result docx = PcCycleDocx.read(docxPath);
+        PcCycleDocx.Result docx = DocxStoreAdapters.toCycleResult(store.get(docxPath));
         CycleRuleParser.ExtractResult ex = CycleRuleParser.extractCycleRules(
                 docx, detailContextTokens, section);
 
@@ -423,7 +428,8 @@ public final class PaymentCycleExtractor {
         }
         List<String> detailTokens = loadDetailContextTokens(productMetaDir);
 
-        PaymentCycleExtractor extractor = new PaymentCycleExtractor(cfg, detailTokens);
+        DocxStore store = new SqliteDocxStore(targetDir.getParent().resolve("cache/docx_cache.db"));
+        PaymentCycleExtractor extractor = new PaymentCycleExtractor(cfg, detailTokens, store);
 
         List<Path> docs = new ArrayList<>();
         if (singleDocx != null) {

@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hanwha.setdata.config.OverridesConfig;
 import com.hanwha.setdata.docx.DocxContent;
-import com.hanwha.setdata.docx.DocxReader;
 import com.hanwha.setdata.output.PythonStyleJson;
+import com.hanwha.setdata.store.DocxStore;
+import com.hanwha.setdata.store.DocxStoreAdapters;
+import com.hanwha.setdata.store.SqliteDocxStore;
 
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
@@ -27,18 +29,18 @@ import java.util.Map;
 public final class JoinAgeExtractor {
 
     private final OverridesConfig config;
-    private final DocxReader docxReader;
+    private final DocxStore store;
     private Path periodDir;
 
-    public JoinAgeExtractor(OverridesConfig config) {
+    public JoinAgeExtractor(OverridesConfig config, DocxStore store) {
         this.config = config;
-        this.docxReader = new DocxReader();
+        this.store = store;
     }
 
     public void setPeriodDir(Path periodDir) { this.periodDir = periodDir; }
 
     public List<LinkedHashMap<String, Object>> extract(Path docxPath, Path jsonPath) throws IOException {
-        DocxContent content = docxReader.read(docxPath);
+        DocxContent content = DocxStoreAdapters.toDocxContent(store.get(docxPath));
         List<String> lines = content.lines();
         List<List<List<String>>> tables = content.tables();
         List<String> sections = content.tableSections();
@@ -192,7 +194,8 @@ public final class JoinAgeExtractor {
 
         OverridesConfig cfg = (overridesPath != null && Files.exists(overridesPath))
                 ? OverridesConfig.load(overridesPath) : null;
-        JoinAgeExtractor extractor = new JoinAgeExtractor(cfg);
+        DocxStore store = new SqliteDocxStore(targetDir.getParent().resolve("cache/docx_cache.db"));
+        JoinAgeExtractor extractor = new JoinAgeExtractor(cfg, store);
         extractor.setPeriodDir(periodDir);
 
         if (singleDocx != null && singleJson != null) {

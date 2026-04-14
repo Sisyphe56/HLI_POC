@@ -3,6 +3,9 @@ package com.hanwha.setdata.extract;
 import com.hanwha.setdata.config.OverridesConfig;
 import com.hanwha.setdata.model.ProductRecord;
 import com.hanwha.setdata.output.PythonStyleJson;
+import com.hanwha.setdata.store.DocxStore;
+import com.hanwha.setdata.store.DocxStoreAdapters;
+import com.hanwha.setdata.store.SqliteDocxStore;
 import com.hanwha.setdata.util.Normalizer;
 
 import java.io.IOException;
@@ -27,13 +30,15 @@ public final class ProductClassificationExtractor {
     public record Result(List<ProductRecord> objects, boolean hasDependent) {}
 
     private final OverridesConfig config;
+    private final DocxStore store;
 
-    public ProductClassificationExtractor(OverridesConfig config) {
+    public ProductClassificationExtractor(OverridesConfig config, DocxStore store) {
         this.config = config;
+        this.store = store;
     }
 
     public Result extractWithMeta(Path docxPath) throws IOException {
-        PcDocx.Result docx = PcDocx.read(docxPath);
+        PcDocx.Result docx = DocxStoreAdapters.toPcDocxResult(store.get(docxPath));
         String fullText = docx.fullText();
         String filename = docxPath.getFileName().toString();
 
@@ -186,7 +191,8 @@ public final class ProductClassificationExtractor {
 
         OverridesConfig cfg = (overridesPath != null && Files.exists(overridesPath))
                 ? OverridesConfig.load(overridesPath) : null;
-        ProductClassificationExtractor extractor = new ProductClassificationExtractor(cfg);
+        DocxStore store = new SqliteDocxStore(targetDir.getParent().resolve("cache/docx_cache.db"));
+        ProductClassificationExtractor extractor = new ProductClassificationExtractor(cfg, store);
 
         List<Path> docs = new ArrayList<>();
         if (singleDocx != null) {
